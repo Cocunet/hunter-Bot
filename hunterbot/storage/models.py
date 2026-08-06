@@ -56,3 +56,24 @@ class ScopeORM(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     authorized_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+
+class FindingORM(Base):
+    __tablename__ = "findings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    category: Mapped[str] = mapped_column(String(64), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    confidence: Mapped[str] = mapped_column(String(16), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    affected_asset: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    location: Mapped[str] = mapped_column(String(2048), nullable=False)
+    evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reproduction_steps: Mapped[str | None] = mapped_column(Text, nullable=True)
+    impact: Mapped[str | None] = mapped_column(Text, nullable=True)
+    remediation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    references: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    knowledge_source_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_items.id"), nullable=True)
+    scanner_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)

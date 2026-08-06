@@ -1,6 +1,7 @@
 import pytest
 from sqlalchemy.orm import Session
 
+from hunterbot.core.interfaces import ScannerResponse
 from hunterbot.storage.database import create_engine_from_url, get_session_factory, init_db
 
 
@@ -11,3 +12,23 @@ def session() -> Session:
     session_factory = get_session_factory(engine)
     with session_factory() as db_session:
         yield db_session
+
+
+class FakeHttpClient:
+    """Test double satisfying hunterbot.core.interfaces.HttpClient.
+
+    Responses are keyed by path; a path with no configured response yields
+    None, matching how ScannerHttpClient treats network failures.
+    """
+
+    def __init__(self, responses: dict[str, ScannerResponse] | None = None) -> None:
+        self._responses = responses or {}
+        self.requested_paths: list[str] = []
+        self.closed = False
+
+    def get(self, path: str) -> ScannerResponse | None:
+        self.requested_paths.append(path)
+        return self._responses.get(path)
+
+    def close(self) -> None:
+        self.closed = True

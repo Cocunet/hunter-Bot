@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from hunterbot.core.domain import KnowledgeItem, Scope, Source
+from hunterbot.core.domain import Finding, KnowledgeItem, Scope, Source
 
 
 class SourceRepository(Protocol):
@@ -64,3 +64,17 @@ class ScopeRepository(Protocol):
     def find_matching(self, target: str) -> list[Scope]:
         """Return all scopes whose ``target`` could authorize the given value."""
         ...
+
+
+class FindingRepository(Protocol):
+    """Persistence contract for scanner-produced Findings."""
+
+    def add(self, finding: Finding) -> Finding:
+        """Persist a new finding and return it with its assigned id."""
+        ...
+
+    def get(self, finding_id: int) -> Finding | None: ...
+
+    def list_by_asset(self, affected_asset: str) -> list[Finding]: ...
+
+    def list_all(self) -> list[Finding]: ...

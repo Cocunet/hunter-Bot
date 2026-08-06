@@ -5,13 +5,17 @@ import typer
 from hunterbot.authorization import NotAuthorizedError, ScopeAuthorizationService
 from hunterbot.config import get_config
 from hunterbot.core.domain import SourceType
+from hunterbot.core.use_cases.run_scan import RunScanUseCase
 from hunterbot.core.use_cases.scope_management import ListScopesUseCase, RegisterScopeUseCase
 from hunterbot.core.use_cases.source_management import ListSourcesUseCase, RegisterSourceUseCase
 from hunterbot.ingestion.connectors import connector_for_path
 from hunterbot.ingestion.pipeline import IngestionPipeline
 from hunterbot.knowledge.extraction import RuleBasedExtractor
 from hunterbot.knowledge.search import KnowledgeSearchService
+from hunterbot.plugins import default_scanners
+from hunterbot.scanners import ScannerHttpClient
 from hunterbot.storage import (
+    SqlAlchemyFindingRepository,
     SqlAlchemyKnowledgeRepository,
     SqlAlchemyScopeRepository,
     SqlAlchemySourceRepository,
@@ -24,9 +28,11 @@ app = typer.Typer(help="HunterBot: authorized security assessment platform.")
 scope_app = typer.Typer(help="Manage authorized scan scopes.")
 source_app = typer.Typer(help="Manage registered knowledge sources.")
 knowledge_app = typer.Typer(help="Search the structured knowledge base.")
+scan_app = typer.Typer(help="Run authorized vulnerability scans.")
 app.add_typer(scope_app, name="scope")
 app.add_typer(source_app, name="source")
 app.add_typer(knowledge_app, name="knowledge")
+app.add_typer(scan_app, name="scan")
 
 
 def _session_factory():
@@ -177,6 +183,39 @@ def knowledge_search(
         typer.echo(
             f"[{item.id}] ({item.category.value}) {item.title} "
             f"cwe={item.cwe or '-'} owasp={item.owasp_category or '-'} severity={severity_label}"
+        )
+
+
+@scan_app.command("run")
+def scan_run(
+    base_url: str = typer.Argument(..., help="Full base URL to scan, e.g. https://example.com"),
+) -> None:
+    """Run all registered scanner plugins against an authorized target.
+
+    Refuses to scan unless ``base_url``'s hostname matches an active,
+    non-expired Scope — register one first with `hunterbot scope add`.
+    """
+    session_factory = _session_factory()
+    with session_factory() as session:
+        authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
+        use_case = RunScanUseCase(
+            authorization_checker=authorization,
+            finding_repository=SqlAlchemyFindingRepository(session),
+            scanners=default_scanners(),
+            http_client_factory=ScannerHttpClient,
+        )
+        try:
+            findings = use_case.execute(base_url=base_url)
+        except NotAuthorizedError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
+
+    if not findings:
+        typer.echo("No findings.")
+        return
+    for finding in findings:
+        typer.echo(
+            f"[{finding.id}] {finding.severity.value.upper()} — {finding.title} ({finding.scanner_name})"
         )
 
 

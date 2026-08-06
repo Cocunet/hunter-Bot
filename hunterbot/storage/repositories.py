@@ -4,6 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from hunterbot.core.domain import (
+    Confidence,
+    Finding,
     KnowledgeItem,
     Scope,
     ScopeStatus,
@@ -13,7 +15,7 @@ from hunterbot.core.domain import (
     VulnerabilityCategory,
     target_matches,
 )
-from hunterbot.storage.models import KnowledgeItemORM, ScopeORM, SourceORM
+from hunterbot.storage.models import FindingORM, KnowledgeItemORM, ScopeORM, SourceORM
 
 
 def _source_to_domain(row: SourceORM) -> Source:
@@ -45,6 +47,27 @@ def _knowledge_item_to_domain(row: KnowledgeItemORM) -> KnowledgeItem:
         version=row.version,
         created_at=row.created_at,
         updated_at=row.updated_at,
+    )
+
+
+def _finding_to_domain(row: FindingORM) -> Finding:
+    return Finding(
+        id=row.id,
+        title=row.title,
+        category=VulnerabilityCategory(row.category),
+        severity=Severity(row.severity),
+        confidence=Confidence(row.confidence),
+        description=row.description,
+        affected_asset=row.affected_asset,
+        location=row.location,
+        evidence=row.evidence,
+        reproduction_steps=row.reproduction_steps,
+        impact=row.impact,
+        remediation=row.remediation,
+        references=tuple(row.references),
+        knowledge_source_id=row.knowledge_source_id,
+        scanner_name=row.scanner_name,
+        created_at=row.created_at,
     )
 
 
@@ -215,3 +238,45 @@ class SqlAlchemyScopeRepository:
     def find_matching(self, target: str) -> list[Scope]:
         all_scopes = self.list()
         return [scope for scope in all_scopes if target_matches(scope.target, target)]
+
+
+class SqlAlchemyFindingRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, finding: Finding) -> Finding:
+        row = FindingORM(
+            title=finding.title,
+            category=finding.category.value,
+            severity=finding.severity.value,
+            confidence=finding.confidence.value,
+            description=finding.description,
+            affected_asset=finding.affected_asset,
+            location=finding.location,
+            evidence=finding.evidence,
+            reproduction_steps=finding.reproduction_steps,
+            impact=finding.impact,
+            remediation=finding.remediation,
+            references=list(finding.references),
+            knowledge_source_id=finding.knowledge_source_id,
+            scanner_name=finding.scanner_name,
+            created_at=finding.created_at,
+        )
+        self._session.add(row)
+        self._session.commit()
+        self._session.refresh(row)
+        return _finding_to_domain(row)
+
+    def get(self, finding_id: int) -> Finding | None:
+        row = self._session.get(FindingORM, finding_id)
+        return _finding_to_domain(row) if row else None
+
+    def list_by_asset(self, affected_asset: str) -> list[Finding]:
+        rows = self._session.scalars(
+            select(FindingORM).where(FindingORM.affected_asset == affected_asset)
+        ).all()
+        return [_finding_to_domain(row) for row in rows]
+
+    def list_all(self) -> list[Finding]:
+        rows = self._session.scalars(select(FindingORM)).all()
+        return [_finding_to_domain(row) for row in rows]
