@@ -84,6 +84,22 @@ class SqlAlchemySourceRepository:
         row = self._session.get(SourceORM, source_id)
         return _source_to_domain(row) if row else None
 
+    def update(self, source: Source) -> Source:
+        if source.id is None:
+            raise ValueError("cannot update a source without an id")
+        row = self._session.get(SourceORM, source.id)
+        if row is None:
+            raise ValueError(f"no source with id {source.id}")
+        row.name = source.name
+        row.source_type = source.source_type.value
+        row.url = source.url
+        row.license_note = source.license_note
+        row.enabled = source.enabled
+        row.last_fetched_at = source.last_fetched_at
+        self._session.commit()
+        self._session.refresh(row)
+        return _source_to_domain(row)
+
     def get_by_name(self, name: str) -> Source | None:
         row = self._session.scalar(select(SourceORM).where(SourceORM.name == name))
         return _source_to_domain(row) if row else None
@@ -137,17 +153,36 @@ class SqlAlchemyKnowledgeRepository:
         ).all()
         return [_knowledge_item_to_domain(row) for row in rows]
 
-    def search(self, *, keyword: str | None = None, category: str | None = None) -> list[KnowledgeItem]:
+    def search(
+        self,
+        *,
+        keyword: str | None = None,
+        category: str | None = None,
+        cwe: str | None = None,
+        owasp_category: str | None = None,
+        severity: str | None = None,
+        tag: str | None = None,
+    ) -> list[KnowledgeItem]:
         stmt = select(KnowledgeItemORM)
         if category is not None:
             stmt = stmt.where(KnowledgeItemORM.category == category)
+        if cwe is not None:
+            stmt = stmt.where(KnowledgeItemORM.cwe == cwe)
+        if owasp_category is not None:
+            stmt = stmt.where(KnowledgeItemORM.owasp_category.ilike(owasp_category))
+        if severity is not None:
+            stmt = stmt.where(KnowledgeItemORM.severity_hint == severity)
         if keyword is not None:
             like = f"%{keyword}%"
             stmt = stmt.where(
                 KnowledgeItemORM.title.ilike(like) | KnowledgeItemORM.summary.ilike(like)
             )
         rows = self._session.scalars(stmt).all()
-        return [_knowledge_item_to_domain(row) for row in rows]
+        items = [_knowledge_item_to_domain(row) for row in rows]
+        if tag is not None:
+            lowered_tag = tag.lower()
+            items = [item for item in items if lowered_tag in (t.lower() for t in item.tags)]
+        return items
 
 
 class SqlAlchemyScopeRepository:

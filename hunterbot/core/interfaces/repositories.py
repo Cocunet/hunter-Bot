@@ -12,6 +12,10 @@ class SourceRepository(Protocol):
         """Persist a new source and return it with its assigned id."""
         ...
 
+    def update(self, source: Source) -> Source:
+        """Persist changes to an already-registered source (must have an id)."""
+        ...
+
     def get(self, source_id: int) -> Source | None: ...
 
     def list(self, *, enabled_only: bool = False) -> list[Source]: ...
@@ -34,7 +38,16 @@ class KnowledgeRepository(Protocol):
 
     def list_by_source(self, source_id: int) -> list[KnowledgeItem]: ...
 
-    def search(self, *, keyword: str | None = None, category: str | None = None) -> list[KnowledgeItem]: ...
+    def search(
+        self,
+        *,
+        keyword: str | None = None,
+        category: str | None = None,
+        cwe: str | None = None,
+        owasp_category: str | None = None,
+        severity: str | None = None,
+        tag: str | None = None,
+    ) -> list[KnowledgeItem]: ...
 
 
 class ScopeRepository(Protocol):

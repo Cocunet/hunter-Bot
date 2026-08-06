@@ -13,16 +13,20 @@ are explicitly authorized to test.
 
 ## Status
 
-This repository is being built incrementally, phase by phase. The current
-slice implements the foundation everything else plugs into:
+This repository is being built incrementally, phase by phase. Implemented so far:
 
 - `hunterbot/core/` — domain models and interfaces, no I/O dependencies
 - `hunterbot/config/` — environment-based application settings
 - `hunterbot/storage/` — SQLAlchemy models and repositories (SQLite by default)
 - `hunterbot/authorization/` — the deny-by-default scan authorization gate
-- `hunterbot/cli/` — a Typer CLI to register scopes/sources and check authorization
+- `hunterbot/ingestion/` — Markdown/HTML/PDF connectors, text normalization, and
+  an incremental ingestion pipeline (fetch → normalize → extract → dedupe → persist)
+- `hunterbot/knowledge/` — a rule-based `KnowledgeExtractor` (CWE/OWASP/severity
+  detection via keyword heuristics, behind an interface an LLM-backed extractor
+  can later implement) and keyword/metadata search
+- `hunterbot/cli/` — a Typer CLI covering scopes, sources, ingestion, and search
 
-Ingestion, the knowledge base, the learning engine, the scanner plugin
+The learning engine (versioning/merge across re-ingestion), the scanner plugin
 framework, and reporting are designed (see project history) but not yet
 implemented — they land in subsequent slices.
 
@@ -42,10 +46,19 @@ hunterbot scope add example.com --program "Acme Bug Bounty" --authorized-by "Ali
 # check whether a target is currently authorized (subdomains match too)
 hunterbot scope check api.example.com
 
-# register a knowledge source (ingestion connectors land in a later slice)
+# register a knowledge source, then ingest a local document into it
 hunterbot source add "OWASP Top 10" --type documentation --url https://owasp.org/www-project-top-ten/
+hunterbot source ingest "OWASP Top 10" ./notes/owasp-top-10.md
 hunterbot source list
+
+# search the extracted knowledge base
+hunterbot knowledge search --keyword injection
+hunterbot knowledge search --cwe CWE-89
+hunterbot knowledge search --category missing_security_headers
 ```
+
+Supported ingestion file types today: `.md`/`.markdown`, `.html`/`.htm`, `.pdf`
+(all read from local disk — network crawling connectors land in a later slice).
 
 Configuration is read from environment variables prefixed `HUNTERBOT_` (or a
 `.env` file), e.g. `HUNTERBOT_DATABASE_URL=postgresql://...` to move off SQLite.

@@ -7,7 +7,12 @@ from hunterbot.config import get_config
 from hunterbot.core.domain import SourceType
 from hunterbot.core.use_cases.scope_management import ListScopesUseCase, RegisterScopeUseCase
 from hunterbot.core.use_cases.source_management import ListSourcesUseCase, RegisterSourceUseCase
+from hunterbot.ingestion.connectors import connector_for_path
+from hunterbot.ingestion.pipeline import IngestionPipeline
+from hunterbot.knowledge.extraction import RuleBasedExtractor
+from hunterbot.knowledge.search import KnowledgeSearchService
 from hunterbot.storage import (
+    SqlAlchemyKnowledgeRepository,
     SqlAlchemyScopeRepository,
     SqlAlchemySourceRepository,
     get_session_factory,
@@ -18,8 +23,10 @@ from hunterbot.storage.database import create_engine_from_url
 app = typer.Typer(help="HunterBot: authorized security assessment platform.")
 scope_app = typer.Typer(help="Manage authorized scan scopes.")
 source_app = typer.Typer(help="Manage registered knowledge sources.")
+knowledge_app = typer.Typer(help="Search the structured knowledge base.")
 app.add_typer(scope_app, name="scope")
 app.add_typer(source_app, name="source")
+app.add_typer(knowledge_app, name="knowledge")
 
 
 def _session_factory():
@@ -107,6 +114,70 @@ def source_list() -> None:
         sources = ListSourcesUseCase(SqlAlchemySourceRepository(session)).execute()
     for source in sources:
         typer.echo(f"[{source.id}] {source.name} ({source.source_type.value}) — {source.url or 'no url'}")
+
+
+@source_app.command("ingest")
+def source_ingest(
+    name: str = typer.Argument(..., help="Name of a previously registered source."),
+    path: str = typer.Argument(..., help="Local .md/.html/.pdf file to ingest for this source."),
+) -> None:
+    """Ingest a local document into the knowledge base for a registered source."""
+    session_factory = _session_factory()
+    with session_factory() as session:
+        source_repo = SqlAlchemySourceRepository(session)
+        source = source_repo.get_by_name(name)
+        if source is None:
+            typer.secho(
+                f"No source named {name!r}. Register it first with `hunterbot source add`.",
+                fg=typer.colors.RED,
+            )
+            raise typer.Exit(code=1)
+
+        connector = connector_for_path(path)
+        pipeline = IngestionPipeline(
+            source_repository=source_repo,
+            knowledge_repository=SqlAlchemyKnowledgeRepository(session),
+            extractor=RuleBasedExtractor(),
+        )
+        result = pipeline.ingest(source=source, connector=connector)
+
+    typer.echo(
+        f"Ingested {path}: {result.items_extracted} extracted, "
+        f"{result.items_added} added, {result.items_deduplicated} already known"
+    )
+
+
+@knowledge_app.command("search")
+def knowledge_search(
+    keyword: str = typer.Option(None, "--keyword", help="Match against title/summary text."),
+    category: str = typer.Option(None, "--category", help="VulnerabilityCategory value, e.g. input_validation."),
+    cwe: str = typer.Option(None, "--cwe", help="Exact CWE id, e.g. CWE-79."),
+    owasp: str = typer.Option(None, "--owasp", help="OWASP category name or code."),
+    severity: str = typer.Option(None, "--severity", help="Severity value, e.g. high."),
+    tag: str = typer.Option(None, "--tag"),
+) -> None:
+    """Search the structured knowledge base."""
+    session_factory = _session_factory()
+    with session_factory() as session:
+        service = KnowledgeSearchService(SqlAlchemyKnowledgeRepository(session))
+        results = service.search(
+            keyword=keyword,
+            category=category,
+            cwe=cwe,
+            owasp_category=owasp,
+            severity=severity,
+            tag=tag,
+        )
+
+    if not results:
+        typer.echo("No matching knowledge items.")
+        return
+    for item in results:
+        severity_label = item.severity_hint.value if item.severity_hint else "-"
+        typer.echo(
+            f"[{item.id}] ({item.category.value}) {item.title} "
+            f"cwe={item.cwe or '-'} owasp={item.owasp_category or '-'} severity={severity_label}"
+        )
 
 
 if __name__ == "__main__":
