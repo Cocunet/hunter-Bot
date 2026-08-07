@@ -57,6 +57,10 @@ This repository is being built incrementally, phase by phase. Implemented so far
   is additive and optional — a scan runs identically well without it
 - `hunterbot/cli/` — a Typer CLI covering scopes, sources, ingestion, search,
   revision history, scans, and reports
+- `hunterbot/api/` — a FastAPI REST layer (`hunterbot serve`, optional `api`
+  extra) exposing the same use-cases as the CLI — scopes, sources +
+  document ingestion, knowledge search, scans, findings, and report
+  generation — with interactive docs at `/docs`
 
 ## Quick start
 
@@ -136,6 +140,40 @@ model can only return values HunterBot already understands. A safety-policy
 refusal on a given chunk of text yields zero items for that chunk rather than
 an error — ingestion continues.
 
+## Running the API
+
+The same use-cases the CLI drives are also exposed as a REST API — useful
+for a future web UI or other integrations. Optional: requires the `api`
+extra (`fastapi`, `uvicorn`, `python-multipart`).
+
+```bash
+pip install -e ".[api]"   # or ".[dev]", which includes it
+hunterbot serve           # http://127.0.0.1:8000, interactive docs at /docs
+
+# equivalent to the CLI quick start above, over HTTP
+curl -X POST localhost:8000/scopes -H "Content-Type: application/json" \
+  -d '{"target": "example.com", "program_name": "Acme Bug Bounty", "authorized_by": "Alice"}'
+curl "localhost:8000/scopes/check?target=api.example.com"
+
+curl -X POST localhost:8000/sources -H "Content-Type: application/json" \
+  -d '{"name": "OWASP Top 10", "source_type": "documentation"}'
+curl -X POST "localhost:8000/sources/OWASP%20Top%2010/ingest" -F "file=@./notes/owasp-top-10.md"
+
+curl "localhost:8000/knowledge/search?keyword=injection"
+
+curl -X POST localhost:8000/scans -H "Content-Type: application/json" \
+  -d '{"base_url": "https://example.com"}'
+curl "localhost:8000/findings"
+
+curl -X POST localhost:8000/reports -H "Content-Type: application/json" \
+  -d '{"format": "markdown"}' -o report.md
+```
+
+`hunterbot serve` binds to `127.0.0.1` by default; pass `--host 0.0.0.0` to
+accept connections from outside the container/host (the Docker image's
+`HUNTERBOT_DATABASE_URL` still applies — point `serve` at the same database
+the CLI uses to see the same scopes/sources/findings from both).
+
 ## Running tests
 
 ```bash
@@ -159,9 +197,12 @@ docker run --rm -v hunterbot-data:/data hunterbot scope add example.com \
   --program "Acme Bug Bounty" --authorized-by "Alice"
 docker run --rm -v hunterbot-data:/data -v "$(pwd)/reports:/reports" hunterbot \
   report generate /reports/report.md --format markdown
+
+# or run the REST API instead of a one-off CLI command
+docker run --rm -p 8000:8000 -v hunterbot-data:/data hunterbot serve --host 0.0.0.0
 ```
 
-The image installs the `semantic` and `llm` extras by default; pass
+The image installs the `semantic`, `llm`, and `api` extras by default; pass
 `ANTHROPIC_API_KEY` via `docker run -e ANTHROPIC_API_KEY=...` to use the
 LLM-backed extractor from a container.
 
@@ -170,16 +211,19 @@ LLM-backed extractor from a container.
 HunterBot follows Clean Architecture: `core/` holds domain models and
 interfaces and depends on nothing else in the tree; every other package
 (`storage/`, `authorization/`, `ingestion/`, `knowledge/`, `scanners/`,
-`plugins/`, `reporting/`, `cli/`) implements or consumes those interfaces.
-This keeps the storage backend, scanner plugins, and report formats
-swappable without touching core logic — e.g. `RunScanUseCase` depends only
-on the `ScannerPlugin`/`HttpClient` Protocols and `GenerateReportUseCase`
-depends only on the `ReportGenerator` Protocol; the concrete `httpx`-based
-`ScannerHttpClient` and the Markdown/JSON/HTML generators are injected by
-the CLI (the composition root) instead. The same pattern applies to
+`plugins/`, `reporting/`, `cli/`, `api/`) implements or consumes those
+interfaces. This keeps the storage backend, scanner plugins, and report
+formats swappable without touching core logic — e.g. `RunScanUseCase`
+depends only on the `ScannerPlugin`/`HttpClient` Protocols and
+`GenerateReportUseCase` depends only on the `ReportGenerator` Protocol; the
+concrete `httpx`-based `ScannerHttpClient` and the Markdown/JSON/HTML
+generators are injected by whichever composition root is running —
+`hunterbot/cli/` or `hunterbot/api/` — instead. The same pattern applies to
 `hunterbot/learning/`: `KnowledgeMergeService` depends on the
 `KnowledgeRepository`/`KnowledgeRevisionRepository` Protocols, not on
-SQLAlchemy directly.
+SQLAlchemy directly. `hunterbot/api/` is a second, independent composition
+root next to the CLI — same use-cases, same repositories, a different
+entry point — not a wrapper around the CLI.
 
 Every module described above from the original architecture is now
 implemented end-to-end and covered by tests, including all six report

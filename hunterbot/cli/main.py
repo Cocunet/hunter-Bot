@@ -58,6 +58,24 @@ def init_db_command() -> None:
     typer.echo(f"Database ready at {config.database_url}")
 
 
+@app.command("serve")
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port"),
+    reload: bool = typer.Option(False, "--reload", help="Auto-reload on code changes (development only)."),
+) -> None:
+    """Run the HunterBot REST API (requires the 'api' extra)."""
+    try:
+        import uvicorn
+    except ImportError:
+        typer.secho(
+            "The API server needs the 'api' extra: pip install \"hunterbot[api]\"",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1) from None
+    uvicorn.run("hunterbot.api.app:app", host=host, port=port, reload=reload)
+
+
 @scope_app.command("add")
 def scope_add(
     target: str = typer.Argument(..., help="Hostname, domain, or IP/CIDR to authorize."),
