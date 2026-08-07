@@ -254,7 +254,7 @@ def scan_run(
 @report_app.command("generate")
 def report_generate(
     output: Path = typer.Argument(..., help="File path to write the report to."),
-    format: str = typer.Option("markdown", "--format", help="markdown, json, or html."),
+    format: str = typer.Option("markdown", "--format", help="markdown, json, html, pdf, docx, or xlsx."),
     asset: str = typer.Option(None, "--asset", help="Limit the report to one affected_asset value."),
 ) -> None:
     """Generate a vulnerability report from stored findings."""

@@ -33,9 +33,9 @@ This repository is being built incrementally, phase by phase. Implemented so far
   (a `ScannerPlugin` Protocol, a registry, and a safety-constrained
   `ScannerHttpClient`) plus two built-in read-only plugins: missing security
   headers and sensitive/backup file exposure
-- `hunterbot/reporting/` — a `ReportGenerator` interface with Markdown, JSON,
-  and HTML implementations (PDF/DOCX/XLSX land the same way in a later slice),
-  sorted most-severe-first and covering every `Finding` field
+- `hunterbot/reporting/` — a `ReportGenerator` interface with six
+  implementations (Markdown, JSON, HTML, PDF, DOCX, XLSX), sorted
+  most-severe-first and covering every `Finding` field
 - `hunterbot/cli/` — a Typer CLI covering scopes, sources, ingestion, search,
   revision history, scans, and reports
 
@@ -73,10 +73,13 @@ hunterbot knowledge history 1
 # scan an authorized target (refuses if the hostname has no active Scope)
 hunterbot scan run https://example.com
 
-# generate a report from stored findings
+# generate a report from stored findings, in any supported format
 hunterbot report generate ./report.md --format markdown
 hunterbot report generate ./report.json --format json
 hunterbot report generate ./report.html --format html
+hunterbot report generate ./report.pdf --format pdf
+hunterbot report generate ./report.docx --format docx
+hunterbot report generate ./report.xlsx --format xlsx
 hunterbot report generate ./report.md --format markdown --asset https://example.com
 ```
 
@@ -110,10 +113,10 @@ the CLI (the composition root) instead. The same pattern applies to
 SQLAlchemy directly.
 
 Every module described above from the original architecture is now
-implemented end-to-end and covered by tests. What's left is depth, not
-structure: additional report formats (PDF/DOCX/XLSX, same
-`ReportGenerator` pattern), a semantic/vector search layer alongside the
-existing keyword search, more scanner plugins, and an optional LLM-backed
+implemented end-to-end and covered by tests, including all six report
+formats named in the original brief. What's left is further depth, not
+structure: a semantic/vector search layer alongside the existing keyword
+search, more scanner plugins, and an optional LLM-backed
 `KnowledgeExtractor` — each slots into an existing interface without
 touching the rest of the system.
 

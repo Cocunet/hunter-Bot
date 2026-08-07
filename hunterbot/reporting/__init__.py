@@ -1,20 +1,22 @@
+from hunterbot.reporting.generators.docx_generator import DOCXReportGenerator
 from hunterbot.reporting.generators.html_generator import HTMLReportGenerator
 from hunterbot.reporting.generators.json_generator import JSONReportGenerator
 from hunterbot.reporting.generators.markdown_generator import MarkdownReportGenerator
+from hunterbot.reporting.generators.pdf_generator import PDFReportGenerator
+from hunterbot.reporting.generators.xlsx_generator import XLSXReportGenerator
 
 _GENERATORS = {
     "markdown": MarkdownReportGenerator,
     "json": JSONReportGenerator,
     "html": HTMLReportGenerator,
+    "pdf": PDFReportGenerator,
+    "docx": DOCXReportGenerator,
+    "xlsx": XLSXReportGenerator,
 }
 
 
 def get_generator(format_name: str):
-    """Look up a built-in ReportGenerator by format name.
-
-    PDF/DOCX/XLSX generators land in a later slice and register here the
-    same way — nothing else about this lookup changes when they do.
-    """
+    """Look up a built-in ReportGenerator by format name."""
     try:
         generator_cls = _GENERATORS[format_name]
     except KeyError:
@@ -23,4 +25,12 @@ def get_generator(format_name: str):
     return generator_cls()
 
 
-__all__ = ["HTMLReportGenerator", "JSONReportGenerator", "MarkdownReportGenerator", "get_generator"]
+__all__ = [
+    "DOCXReportGenerator",
+    "HTMLReportGenerator",
+    "JSONReportGenerator",
+    "MarkdownReportGenerator",
+    "PDFReportGenerator",
+    "XLSXReportGenerator",
+    "get_generator",
+]
