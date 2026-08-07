@@ -12,7 +12,7 @@ from hunterbot.core.use_cases.scope_management import ListScopesUseCase, Registe
 from hunterbot.core.use_cases.source_management import ListSourcesUseCase, RegisterSourceUseCase
 from hunterbot.ingestion.connectors import connector_for_path
 from hunterbot.ingestion.pipeline import IngestionPipeline
-from hunterbot.knowledge.extraction import RuleBasedExtractor
+from hunterbot.knowledge.extraction import LLMExtractionError, LLMKnowledgeExtractor, RuleBasedExtractor
 from hunterbot.knowledge.search import KnowledgeSearchService, SemanticKnowledgeSearchService, TfidfSemanticIndex
 from hunterbot.plugins import default_scanners
 from hunterbot.reporting import get_generator
@@ -132,8 +132,25 @@ def source_list() -> None:
 def source_ingest(
     name: str = typer.Argument(..., help="Name of a previously registered source."),
     path: str = typer.Argument(..., help="Local .md/.html/.pdf file to ingest for this source."),
+    extractor: str = typer.Option(
+        "rule-based",
+        "--extractor",
+        help="'rule-based' (default, offline) or 'llm' (Claude API; requires the 'llm' extra and an API key).",
+    ),
 ) -> None:
     """Ingest a local document into the knowledge base for a registered source."""
+    if extractor == "rule-based":
+        extractor_instance = RuleBasedExtractor()
+    elif extractor == "llm":
+        try:
+            extractor_instance = LLMKnowledgeExtractor()
+        except LLMExtractionError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
+    else:
+        typer.secho(f"Unknown extractor {extractor!r} (expected 'rule-based' or 'llm').", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
     session_factory = _session_factory()
     with session_factory() as session:
         source_repo = SqlAlchemySourceRepository(session)
@@ -150,9 +167,13 @@ def source_ingest(
             source_repository=source_repo,
             knowledge_repository=SqlAlchemyKnowledgeRepository(session),
             knowledge_revision_repository=SqlAlchemyKnowledgeRevisionRepository(session),
-            extractor=RuleBasedExtractor(),
+            extractor=extractor_instance,
         )
-        result = pipeline.ingest(source=source, connector=connector)
+        try:
+            result = pipeline.ingest(source=source, connector=connector)
+        except LLMExtractionError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
 
     typer.echo(
         f"Ingested {path}: {result.items_extracted} extracted, "

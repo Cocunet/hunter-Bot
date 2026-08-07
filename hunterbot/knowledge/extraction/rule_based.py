@@ -1,7 +1,7 @@
-import hashlib
 import re
 
 from hunterbot.core.domain import KnowledgeItem, Severity, Source, VulnerabilityCategory
+from hunterbot.knowledge.extraction.hashing import content_hash
 
 _MIN_PARAGRAPH_LENGTH = 40
 
@@ -157,11 +157,6 @@ def _derive_title(paragraph: str) -> str:
     return first_line
 
 
-def _content_hash(paragraph: str) -> str:
-    normalized = " ".join(paragraph.lower().split())
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-
 class RuleBasedExtractor:
     """Deterministic, keyword-driven KnowledgeExtractor implementation.
 
@@ -190,10 +185,10 @@ class RuleBasedExtractor:
                 continue
             category, matched_keywords = scored
 
-            content_hash = _content_hash(paragraph)
-            if content_hash in seen_hashes:
+            paragraph_hash = content_hash(paragraph)
+            if paragraph_hash in seen_hashes:
                 continue
-            seen_hashes.add(content_hash)
+            seen_hashes.add(paragraph_hash)
 
             items.append(
                 KnowledgeItem(
@@ -201,7 +196,7 @@ class RuleBasedExtractor:
                     category=category,
                     title=_derive_title(paragraph),
                     summary=paragraph,
-                    content_hash=content_hash,
+                    content_hash=paragraph_hash,
                     cwe=_find_cwe(paragraph),
                     owasp_category=_find_owasp_category(paragraph),
                     severity_hint=_find_severity(lowered),

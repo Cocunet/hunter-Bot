@@ -21,9 +21,11 @@ This repository is being built incrementally, phase by phase. Implemented so far
 - `hunterbot/authorization/` — the deny-by-default scan authorization gate
 - `hunterbot/ingestion/` — Markdown/HTML/PDF connectors, text normalization, and
   an incremental ingestion pipeline (fetch → normalize → extract → learn → persist)
-- `hunterbot/knowledge/` — a rule-based `KnowledgeExtractor` (CWE/OWASP/severity
-  detection via keyword heuristics, behind an interface an LLM-backed extractor
-  can later implement); keyword/metadata search; and optional semantic search
+- `hunterbot/knowledge/` — two `KnowledgeExtractor` implementations behind the
+  same interface: `RuleBasedExtractor` (default, offline, CWE/OWASP/severity
+  detection via keyword heuristics) and `LLMKnowledgeExtractor` (optional,
+  uses the Claude API with a structured-output schema for higher-recall
+  extraction); keyword/metadata search; and optional semantic search
   (`SemanticIndex` Protocol + a TF-IDF/cosine-similarity default backend that
   needs no model download — falls back to keyword search when its `scikit-learn`
   dependency isn't installed, per the brief's "if a vector database is available")
@@ -65,6 +67,10 @@ hunterbot source add "OWASP Top 10" --type documentation --url https://owasp.org
 hunterbot source ingest "OWASP Top 10" ./notes/owasp-top-10.md
 hunterbot source list
 
+# or extract with Claude instead of the rule-based heuristics
+# (requires: pip install ".[llm]" and ANTHROPIC_API_KEY set)
+hunterbot source ingest "OWASP Top 10" ./notes/owasp-top-10.md --extractor llm
+
 # search the extracted knowledge base
 hunterbot knowledge search --keyword injection
 hunterbot knowledge search --cwe CWE-89
@@ -104,6 +110,17 @@ Semantic search is an optional extra: `pip install ".[semantic]"` (or
 keyword search over the same query text — the rest of HunterBot works
 identically either way.
 
+The LLM-backed extractor is likewise optional: `pip install ".[llm]"` installs
+the `anthropic` SDK; you also need `ANTHROPIC_API_KEY` set (or another
+credential source the SDK resolves — see its docs) to actually call the API.
+It defaults to Claude Opus 5 — override with `HUNTERBOT_ANTHROPIC_MODEL` if a
+cheaper model suits a high-volume ingestion workload better. Extraction uses
+a JSON-schema-constrained structured output (`client.messages.parse`) built
+directly from HunterBot's `VulnerabilityCategory`/`Severity` enums, so the
+model can only return values HunterBot already understands. A safety-policy
+refusal on a given chunk of text yields zero items for that chunk rather than
+an error — ingestion continues.
+
 ## Running tests
 
 ```bash
@@ -129,11 +146,11 @@ SQLAlchemy directly.
 
 Every module described above from the original architecture is now
 implemented end-to-end and covered by tests, including all six report
-formats named in the original brief and optional semantic search. What's
-left is further depth, not structure: additional scanner plugins (e.g.
-authentication/authorization/API-specific checks) and an optional
-LLM-backed `KnowledgeExtractor` — each slots into an existing interface
-without touching the rest of the system.
+formats named in the original brief, optional semantic search, and an
+optional LLM-backed `KnowledgeExtractor`. What's left is further depth, not
+structure: additional scanner plugins (e.g. authentication/authorization/
+API-specific checks) — each slots into an existing interface without
+touching the rest of the system.
 
 ## Legal and ethical use
 
