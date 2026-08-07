@@ -38,10 +38,15 @@ This repository is being built incrementally, phase by phase. Implemented so far
   as a `KnowledgeItemRevision` before overwriting, so history is never lost
 - `hunterbot/scanners/` + `hunterbot/plugins/` — the scanner plugin framework
   (a `ScannerPlugin` Protocol, a registry, and a safety-constrained
-  `ScannerHttpClient`) plus four built-in read-only plugins: missing security
-  headers, sensitive/backup file exposure, directory listing exposure, and
+  `ScannerHttpClient`) plus seven built-in read-only plugins: missing security
+  headers, sensitive/backup file exposure, directory listing exposure,
   information disclosure (verbose `Server`/`X-Powered-By` headers and
-  well-known info-leak endpoints)
+  well-known info-leak endpoints), cookie security (missing Secure/HttpOnly/
+  SameSite), CORS misconfiguration (wildcard origin + allowed credentials),
+  and open redirect (unvalidated redirect-parameter probing — the one plugin
+  that needs `HttpClient.get_no_redirect`, since the shared client otherwise
+  follows 3xx responses itself and the scanner would never see the
+  vulnerable `Location` header)
 - `hunterbot/reporting/` — a `ReportGenerator` interface with six
   implementations (Markdown, JSON, HTML, PDF, DOCX, XLSX), sorted
   most-severe-first and covering every `Finding` field

@@ -25,8 +25,14 @@ class ScannerHttpClient:
         )
 
     def get(self, path: str) -> ScannerResponse | None:
+        return self._get(path, follow_redirects=True)
+
+    def get_no_redirect(self, path: str) -> ScannerResponse | None:
+        return self._get(path, follow_redirects=False)
+
+    def _get(self, path: str, *, follow_redirects: bool) -> ScannerResponse | None:
         try:
-            response = self._client.get(path)
+            response = self._client.get(path, follow_redirects=follow_redirects)
         except httpx.HTTPError:
             return None
         return ScannerResponse(

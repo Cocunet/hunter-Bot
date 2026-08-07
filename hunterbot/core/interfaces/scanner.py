@@ -25,6 +25,16 @@ class HttpClient(Protocol):
 
     def get(self, path: str) -> ScannerResponse | None: ...
 
+    def get_no_redirect(self, path: str) -> ScannerResponse | None:
+        """Like ``get``, but returns the first response verbatim instead of
+        following a 3xx to its target.
+
+        Needed by scanners that inspect a redirect's own headers (e.g. an
+        open-redirect check reading ``Location``) — ``get`` would otherwise
+        chase the redirect itself, so the caller never observes it.
+        """
+        ...
+
     def close(self) -> None: ...
 
 

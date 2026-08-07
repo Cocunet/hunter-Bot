@@ -30,5 +30,9 @@ class FakeHttpClient:
         self.requested_paths.append(path)
         return self._responses.get(path)
 
+    def get_no_redirect(self, path: str) -> ScannerResponse | None:
+        self.requested_paths.append(path)
+        return self._responses.get(path)
+
     def close(self) -> None:
         self.closed = True
