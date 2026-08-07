@@ -34,8 +34,10 @@ This repository is being built incrementally, phase by phase. Implemented so far
   as a `KnowledgeItemRevision` before overwriting, so history is never lost
 - `hunterbot/scanners/` + `hunterbot/plugins/` — the scanner plugin framework
   (a `ScannerPlugin` Protocol, a registry, and a safety-constrained
-  `ScannerHttpClient`) plus two built-in read-only plugins: missing security
-  headers and sensitive/backup file exposure
+  `ScannerHttpClient`) plus four built-in read-only plugins: missing security
+  headers, sensitive/backup file exposure, directory listing exposure, and
+  information disclosure (verbose `Server`/`X-Powered-By` headers and
+  well-known info-leak endpoints)
 - `hunterbot/reporting/` — a `ReportGenerator` interface with six
   implementations (Markdown, JSON, HTML, PDF, DOCX, XLSX), sorted
   most-severe-first and covering every `Finding` field
@@ -128,7 +130,8 @@ SQLAlchemy directly.
 Every module described above from the original architecture is now
 implemented end-to-end and covered by tests, including all six report
 formats named in the original brief and optional semantic search. What's
-left is further depth, not structure: more scanner plugins and an optional
+left is further depth, not structure: additional scanner plugins (e.g.
+authentication/authorization/API-specific checks) and an optional
 LLM-backed `KnowledgeExtractor` — each slots into an existing interface
 without touching the rest of the system.
 
