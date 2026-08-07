@@ -1,3 +1,4 @@
+import logging
 from typing import Callable
 from urllib.parse import urlparse
 
@@ -8,11 +9,24 @@ from hunterbot.core.interfaces import (
     HttpClient,
     KnowledgeCorrelator,
     ScannerPlugin,
+    ScannerSelector,
 )
+
+logger = logging.getLogger(__name__)
+
+_RECON_BODY_SNIPPET_LENGTH = 300
+
+
+def _build_recon_signal(http_client: HttpClient) -> str:
+    response = http_client.get("/")
+    if response is None:
+        return "GET / did not return a response (target unreachable or refused the connection)."
+    body_snippet = response.text[:_RECON_BODY_SNIPPET_LENGTH]
+    return f"status={response.status_code}\nheaders={response.headers}\nbody_snippet={body_snippet!r}"
 
 
 class RunScanUseCase:
-    """Runs every registered scanner plugin against an authorized target.
+    """Runs registered scanner plugins against an authorized target.
 
     Authorization is checked exactly once, before any scanner touches the
     network, using the hostname parsed out of ``base_url``. There is no
@@ -30,6 +44,18 @@ class RunScanUseCase:
     hunterbot.knowledge.correlation.KnowledgeCorrelationService) before
     being persisted. A scan runs identically well without one — correlation
     is additive, never required, and never blocks or fails a scan.
+
+    ``scanner_selector`` is optional and opt-in (unlike the correlator, it
+    changes what gets tested, so a caller must ask for it explicitly — see
+    hunterbot.cli's ``--adaptive`` flag). When supplied, one plain GET is
+    made first to build a short recon signal, then the selector narrows
+    ``scanners`` down to whichever subset it picks — see
+    hunterbot.core.interfaces.ScannerSelector for why it can only narrow,
+    never add to or otherwise change, that fixed set. Any failure during
+    selection (the selector errors, or returns nothing usable) falls back
+    to running every registered scanner rather than failing the scan or
+    silently under-testing the target — the safe direction to fail in for a
+    security tool is "tested more than planned," not "tested less."
     """
 
     def __init__(
@@ -40,12 +66,14 @@ class RunScanUseCase:
         scanners: list[ScannerPlugin],
         http_client_factory: Callable[[str], HttpClient],
         knowledge_correlator: KnowledgeCorrelator | None = None,
+        scanner_selector: ScannerSelector | None = None,
     ) -> None:
         self._authorization = authorization_checker
         self._findings = finding_repository
         self._scanners = scanners
         self._http_client_factory = http_client_factory
         self._knowledge_correlator = knowledge_correlator
+        self._scanner_selector = scanner_selector
 
     def execute(self, *, base_url: str) -> list[Finding]:
         hostname = urlparse(base_url).hostname
@@ -56,8 +84,10 @@ class RunScanUseCase:
 
         http_client = self._http_client_factory(base_url)
         try:
+            scanners_to_run = self._select_scanners(base_url=base_url, http_client=http_client)
+
             persisted_findings: list[Finding] = []
-            for scanner in self._scanners:
+            for scanner in scanners_to_run:
                 for finding in scanner.scan(base_url=base_url, http_client=http_client):
                     if self._knowledge_correlator is not None:
                         knowledge_source_id = self._knowledge_correlator.correlate(finding)
@@ -66,3 +96,25 @@ class RunScanUseCase:
             return persisted_findings
         finally:
             http_client.close()
+
+    def _select_scanners(self, *, base_url: str, http_client: HttpClient) -> list[ScannerPlugin]:
+        if self._scanner_selector is None:
+            return self._scanners
+
+        try:
+            recon_signal = _build_recon_signal(http_client)
+            selected_names = self._scanner_selector.select(
+                base_url=base_url, recon_signal=recon_signal, available_scanners=self._scanners
+            )
+            selected = [scanner for scanner in self._scanners if scanner.name in set(selected_names)]
+        except Exception as exc:
+            # Expected/handled, not a crash: log the summary at WARNING (so
+            # it's visible without extra config) and the full traceback only
+            # at DEBUG -- exc_info=True on the WARNING itself would print a
+            # scary-looking stack trace to stderr for what a caller should
+            # read as "adaptive scanning declined, scan continued normally".
+            logger.warning("adaptive scanner selection failed (%s); running all registered scanners", exc)
+            logger.debug("adaptive scanner selection failure detail", exc_info=True)
+            return self._scanners
+
+        return selected or self._scanners

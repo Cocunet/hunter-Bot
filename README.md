@@ -55,12 +55,29 @@ This repository is being built incrementally, phase by phase. Implemented so far
   `VulnerabilityCategory`, most shared significant words) so scan output and
   reports show *why* a finding matters, not just that it was found; linking
   is additive and optional — a scan runs identically well without it
+- `hunterbot/reasoning/` — LLM-backed reasoning over what scanning already
+  found, on top of the Claude API infrastructure shared with
+  `LLMKnowledgeExtractor` (optional, `llm` extra, same Opus-5-default /
+  graceful-unavailability pattern). Two capabilities:
+  - `LLMFindingAnalyzer` — triages every stored Finding (critical / high /
+    medium / low / likely-false-positive, with reasoning) and identifies
+    attack chains where two or more Findings combine into a bigger risk
+    than any of them read alone. Purely interpretive: read-only, changes
+    nothing, and never invents a finding id it wasn't given.
+  - `LLMScannerSelector` — an *opt-in* (`--adaptive`) adaptive scan mode:
+    one plain recon GET, then Claude picks which of the already-registered
+    `ScannerPlugin`s are worth running against this target. It can only
+    narrow `RunScanUseCase`'s fixed, safety-reviewed scanner list down to a
+    subset of itself — it never gets to invent a request of its own — and
+    any failure (unavailable, API error, empty/hallucinated selection)
+    falls back to running every scanner rather than under-testing the
+    target silently.
 - `hunterbot/cli/` — a Typer CLI covering scopes, sources, ingestion, search,
-  revision history, scans, and reports
+  revision history, scans (`--adaptive`), findings analysis, and reports
 - `hunterbot/api/` — a FastAPI REST layer (`hunterbot serve`, optional `api`
   extra) exposing the same use-cases as the CLI — scopes, sources +
-  document ingestion, knowledge search, scans, findings, and report
-  generation — with interactive docs at `/docs`
+  document ingestion, knowledge search, scans (`adaptive: true`), findings
+  + analysis, and report generation — with interactive docs at `/docs`
 
 ## Quick start
 
@@ -105,6 +122,17 @@ hunterbot knowledge history 1
 # each finding is automatically linked to the best-matching KnowledgeItem
 # from the ingested knowledge base, when one exists in the same category
 hunterbot scan run https://example.com
+
+# adaptive mode: Claude picks which registered scanners are worth running
+# based on a quick recon request, instead of always running all of them
+# (requires: pip install ".[llm]" and ANTHROPIC_API_KEY set; falls back to
+# running every scanner if selection is unavailable or fails)
+hunterbot scan run https://example.com --adaptive
+
+# triage stored findings and surface attack chains with Claude
+# (requires the same 'llm' extra + API key; read-only, never re-scans)
+hunterbot findings analyze
+hunterbot findings analyze --asset https://example.com
 
 # generate a report from stored findings, in any supported format
 # (a linked finding renders its knowledge source's title, not just its id)
@@ -163,7 +191,13 @@ curl "localhost:8000/knowledge/search?keyword=injection"
 
 curl -X POST localhost:8000/scans -H "Content-Type: application/json" \
   -d '{"base_url": "https://example.com"}'
+# adaptive: true asks Claude to narrow down which scanners run (requires
+# the 'llm' extra + ANTHROPIC_API_KEY; safely falls back to "run all" otherwise)
+curl -X POST localhost:8000/scans -H "Content-Type: application/json" \
+  -d '{"base_url": "https://example.com", "adaptive": true}'
 curl "localhost:8000/findings"
+
+curl -X POST localhost:8000/findings/analyze -H "Content-Type: application/json" -d '{}'
 
 curl -X POST localhost:8000/reports -H "Content-Type: application/json" \
   -d '{"format": "markdown"}' -o report.md
@@ -228,11 +262,18 @@ entry point — not a wrapper around the CLI.
 Every module described above from the original architecture is now
 implemented end-to-end and covered by tests, including all six report
 formats named in the original brief, optional semantic search, an
-optional LLM-backed `KnowledgeExtractor`, and knowledge-to-finding
-correlation. What's left is further depth, not structure: additional
-scanner plugins (e.g. authentication/authorization/API-specific checks) —
-each slots into an existing interface without touching the rest of the
-system.
+optional LLM-backed `KnowledgeExtractor`, knowledge-to-finding correlation,
+and a REST API alongside the CLI. `hunterbot/reasoning/` follows the exact
+same optional/graceful-degradation shape as `LLMKnowledgeExtractor`, but
+where extraction turns unstructured text into `KnowledgeItem`s,
+`LLMFindingAnalyzer`/`LLMScannerSelector` reason about the platform's own
+Findings and ScannerPlugin registry — one interprets results after a scan
+(triage, attack chains), the other narrows *which* already-vetted scanners
+run before one (adaptive selection); neither can act outside HunterBot's
+existing scanner list or authorization gate. What's left is further depth,
+not structure: additional scanner plugins (e.g. authentication/
+authorization/API-specific checks) — each slots into an existing interface
+without touching the rest of the system.
 
 ## Legal and ethical use
 

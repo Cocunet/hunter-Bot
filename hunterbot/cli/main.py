@@ -6,6 +6,7 @@ import typer
 from hunterbot.authorization import NotAuthorizedError, ScopeAuthorizationService
 from hunterbot.config import get_config
 from hunterbot.core.domain import SourceType
+from hunterbot.core.use_cases.analyze_findings import AnalyzeFindingsUseCase
 from hunterbot.core.use_cases.generate_report import GenerateReportUseCase
 from hunterbot.core.use_cases.run_scan import RunScanUseCase
 from hunterbot.core.use_cases.scope_management import ListScopesUseCase, RegisterScopeUseCase
@@ -16,6 +17,7 @@ from hunterbot.knowledge.correlation import KnowledgeCorrelationService
 from hunterbot.knowledge.extraction import LLMExtractionError, LLMKnowledgeExtractor, RuleBasedExtractor
 from hunterbot.knowledge.search import KnowledgeSearchService, SemanticKnowledgeSearchService, TfidfSemanticIndex
 from hunterbot.plugins import default_scanners
+from hunterbot.reasoning import LLMAnalysisError, LLMFindingAnalyzer, LLMScannerSelector, ScannerSelectionError
 from hunterbot.reporting import get_generator
 from hunterbot.scanners import ScannerHttpClient
 from hunterbot.storage import (
@@ -34,11 +36,13 @@ scope_app = typer.Typer(help="Manage authorized scan scopes.")
 source_app = typer.Typer(help="Manage registered knowledge sources.")
 knowledge_app = typer.Typer(help="Search the structured knowledge base.")
 scan_app = typer.Typer(help="Run authorized vulnerability scans.")
+findings_app = typer.Typer(help="Inspect and analyze stored findings.")
 report_app = typer.Typer(help="Generate vulnerability reports from stored findings.")
 app.add_typer(scope_app, name="scope")
 app.add_typer(source_app, name="source")
 app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(scan_app, name="scan")
+app.add_typer(findings_app, name="findings")
 app.add_typer(report_app, name="report")
 
 
@@ -301,12 +305,28 @@ def knowledge_history(item_id: int) -> None:
 @scan_app.command("run")
 def scan_run(
     base_url: str = typer.Argument(..., help="Full base URL to scan, e.g. https://example.com"),
+    adaptive: bool = typer.Option(
+        False,
+        "--adaptive",
+        help=(
+            "Use Claude to pick which registered scanners are worth running, based on a "
+            "quick recon request, instead of always running all of them (requires the 'llm' extra)."
+        ),
+    ),
 ) -> None:
-    """Run all registered scanner plugins against an authorized target.
+    """Run registered scanner plugins against an authorized target.
 
     Refuses to scan unless ``base_url``'s hostname matches an active,
     non-expired Scope — register one first with `hunterbot scope add`.
     """
+    scanner_selector = None
+    if adaptive:
+        try:
+            scanner_selector = LLMScannerSelector()
+        except ScannerSelectionError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
+
     session_factory = _session_factory()
     with session_factory() as session:
         authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
@@ -316,6 +336,7 @@ def scan_run(
             scanners=default_scanners(),
             http_client_factory=ScannerHttpClient,
             knowledge_correlator=KnowledgeCorrelationService(SqlAlchemyKnowledgeRepository(session)),
+            scanner_selector=scanner_selector,
         )
         try:
             findings = use_case.execute(base_url=base_url)
@@ -334,6 +355,49 @@ def scan_run(
             f"[{finding.id}] {finding.severity.value.upper()} — {finding.title} "
             f"({finding.scanner_name}{knowledge_note})"
         )
+
+
+@findings_app.command("analyze")
+def findings_analyze(
+    asset: str = typer.Option(None, "--asset", help="Limit analysis to one affected_asset value."),
+) -> None:
+    """Use Claude to triage stored findings and surface attack chains (requires the 'llm' extra).
+
+    Read-only: this reasons about findings that already exist and never
+    triggers new scanning.
+    """
+    try:
+        analyzer = LLMFindingAnalyzer()
+    except LLMAnalysisError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
+
+    session_factory = _session_factory()
+    with session_factory() as session:
+        use_case = AnalyzeFindingsUseCase(
+            finding_repository=SqlAlchemyFindingRepository(session),
+            analyzer=analyzer,
+            knowledge_repository=SqlAlchemyKnowledgeRepository(session),
+        )
+        try:
+            analysis = use_case.execute(affected_asset=asset)
+        except LLMAnalysisError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
+
+    typer.echo(analysis.summary)
+
+    if analysis.triage:
+        typer.echo("\nTriage:")
+        for item in analysis.triage:
+            typer.echo(f"  [{item.finding_id}] {item.priority.value.upper()} — {item.reasoning}")
+
+    if analysis.attack_chains:
+        typer.echo("\nAttack chains:")
+        for chain in analysis.attack_chains:
+            finding_ids = ", ".join(str(fid) for fid in chain.finding_ids)
+            typer.echo(f"  [{chain.severity.value.upper()}] {chain.title} (findings {finding_ids})")
+            typer.echo(f"    {chain.narrative}")
 
 
 @report_app.command("generate")

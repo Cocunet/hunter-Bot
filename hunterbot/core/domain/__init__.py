@@ -1,3 +1,4 @@
+from hunterbot.core.domain.analysis import AttackChain, FindingTriage, ScanAnalysis, TriagePriority
 from hunterbot.core.domain.enums import (
     Confidence,
     ScopeStatus,
@@ -13,15 +14,19 @@ from hunterbot.core.domain.scope import Scope
 from hunterbot.core.domain.source import Source
 
 __all__ = [
+    "AttackChain",
     "Confidence",
     "Finding",
+    "FindingTriage",
     "KnowledgeItem",
     "KnowledgeItemRevision",
+    "ScanAnalysis",
     "Scope",
     "ScopeStatus",
     "Severity",
     "Source",
     "SourceType",
+    "TriagePriority",
     "VulnerabilityCategory",
     "target_matches",
 ]

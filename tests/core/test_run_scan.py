@@ -144,6 +144,86 @@ class TestRunScanUseCase:
 
         assert findings[0].knowledge_source_id is None
 
+    def test_adaptive_selector_narrows_which_scanners_run(self, session: Session) -> None:
+        SqlAlchemyScopeRepository(session).add(
+            Scope(target="example.com", program_name="Acme", authorized_by="Alice")
+        )
+        authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
+        wanted_scanner = _StubScanner([_finding(title="Wanted")])
+        wanted_scanner.name = "wanted-scanner"
+        skipped_scanner = _StubScanner([_finding(title="Skipped")])
+        skipped_scanner.name = "skipped-scanner"
+
+        class _StubSelector:
+            def __init__(self) -> None:
+                self.received_available_names: list[str] | None = None
+
+            def select(self, *, base_url, recon_signal, available_scanners):
+                self.received_available_names = [s.name for s in available_scanners]
+                return ["wanted-scanner"]
+
+        selector = _StubSelector()
+        use_case = RunScanUseCase(
+            authorization_checker=authorization,
+            finding_repository=SqlAlchemyFindingRepository(session),
+            scanners=[wanted_scanner, skipped_scanner],
+            http_client_factory=lambda base_url: FakeHttpClient(),
+            scanner_selector=selector,
+        )
+
+        findings = use_case.execute(base_url=_BASE_URL)
+
+        assert [f.title for f in findings] == ["Wanted"]
+        assert set(selector.received_available_names) == {"wanted-scanner", "skipped-scanner"}
+
+    def test_adaptive_selector_failure_falls_back_to_running_everything(self, session: Session) -> None:
+        SqlAlchemyScopeRepository(session).add(
+            Scope(target="example.com", program_name="Acme", authorized_by="Alice")
+        )
+        authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
+        scanner = _StubScanner([_finding()])
+
+        class _RaisingSelector:
+            def select(self, *, base_url, recon_signal, available_scanners):
+                raise RuntimeError("selection boom")
+
+        use_case = RunScanUseCase(
+            authorization_checker=authorization,
+            finding_repository=SqlAlchemyFindingRepository(session),
+            scanners=[scanner],
+            http_client_factory=lambda base_url: FakeHttpClient(),
+            scanner_selector=_RaisingSelector(),
+        )
+
+        findings = use_case.execute(base_url=_BASE_URL)
+
+        assert len(findings) == 1
+
+    def test_adaptive_selector_result_with_no_valid_names_falls_back_to_running_everything(
+        self, session: Session
+    ) -> None:
+        SqlAlchemyScopeRepository(session).add(
+            Scope(target="example.com", program_name="Acme", authorized_by="Alice")
+        )
+        authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
+        scanner = _StubScanner([_finding()])
+
+        class _UselessSelector:
+            def select(self, *, base_url, recon_signal, available_scanners):
+                return ["nonexistent-scanner"]
+
+        use_case = RunScanUseCase(
+            authorization_checker=authorization,
+            finding_repository=SqlAlchemyFindingRepository(session),
+            scanners=[scanner],
+            http_client_factory=lambda base_url: FakeHttpClient(),
+            scanner_selector=_UselessSelector(),
+        )
+
+        findings = use_case.execute(base_url=_BASE_URL)
+
+        assert len(findings) == 1
+
     def test_subdomain_target_is_authorized_by_parent_domain_scope(self, session: Session) -> None:
         SqlAlchemyScopeRepository(session).add(
             Scope(target="example.com", program_name="Acme", authorized_by="Alice")

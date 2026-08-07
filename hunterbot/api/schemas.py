@@ -50,8 +50,19 @@ class KnowledgeHistoryResponse(BaseModel):
 
 class ScanRequest(BaseModel):
     base_url: str = Field(min_length=1, description="Full base URL to scan, e.g. https://example.com")
+    adaptive: bool = Field(
+        default=False,
+        description=(
+            "Use Claude to pick which registered scanners are worth running, based on a "
+            "quick recon request, instead of always running all of them (requires the 'llm' extra)."
+        ),
+    )
 
 
 class ReportRequest(BaseModel):
     format: str = Field(default="markdown", description="markdown, json, html, pdf, docx, or xlsx.")
     asset: str | None = Field(default=None, description="Limit the report to one affected_asset value.")
+
+
+class AnalyzeRequest(BaseModel):
+    asset: str | None = Field(default=None, description="Limit analysis to one affected_asset value.")
