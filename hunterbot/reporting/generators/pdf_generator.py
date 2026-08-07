@@ -5,6 +5,7 @@ from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
 from hunterbot.core.domain import Finding
+from hunterbot.reporting.knowledge_labels import knowledge_source_label
 from hunterbot.reporting.ordering import sort_findings
 
 _TITLE_SIZE = 16
@@ -52,7 +53,7 @@ def _write_section(pdf: FPDF, label: str, value: str) -> None:
     pdf.ln(2)
 
 
-def _write_finding(pdf: FPDF, finding: Finding) -> None:
+def _write_finding(pdf: FPDF, finding: Finding, knowledge_titles: dict[int, str] | None) -> None:
     pdf.set_font("Helvetica", style="B", size=_HEADING_SIZE)
     _paragraph(pdf, _LINE_HEIGHT + 1, f"[{finding.severity.value.upper()}] {finding.title}")
     pdf.ln(1)
@@ -63,8 +64,9 @@ def _write_finding(pdf: FPDF, finding: Finding) -> None:
     _write_labeled_line(pdf, "Location", finding.location)
     _write_labeled_line(pdf, "Scanner", finding.scanner_name)
     _write_labeled_line(pdf, "Detected", finding.created_at.isoformat())
-    if finding.knowledge_source_id is not None:
-        _write_labeled_line(pdf, "Knowledge source", f"KnowledgeItem #{finding.knowledge_source_id}")
+    label = knowledge_source_label(finding, knowledge_titles)
+    if label is not None:
+        _write_labeled_line(pdf, "Knowledge source", label)
     pdf.ln(2)
 
     _write_section(pdf, "Description", finding.description)
@@ -89,7 +91,13 @@ def _write_finding(pdf: FPDF, finding: Finding) -> None:
 class PDFReportGenerator:
     format_name = "pdf"
 
-    def generate(self, *, findings: list[Finding], output_path: Path) -> Path:
+    def generate(
+        self,
+        *,
+        findings: list[Finding],
+        output_path: Path,
+        knowledge_titles: dict[int, str] | None = None,
+    ) -> Path:
         ordered = sort_findings(findings)
 
         pdf = FPDF()
@@ -106,7 +114,7 @@ class PDFReportGenerator:
         if not ordered:
             _paragraph(pdf, _LINE_HEIGHT, "No findings.")
         for finding in ordered:
-            _write_finding(pdf, finding)
+            _write_finding(pdf, finding, knowledge_titles)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         pdf.output(str(output_path))

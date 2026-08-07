@@ -2,10 +2,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from hunterbot.core.domain import Finding
+from hunterbot.reporting.knowledge_labels import knowledge_source_label
 from hunterbot.reporting.ordering import sort_findings
 
 
-def _finding_section(finding: Finding) -> str:
+def _finding_section(finding: Finding, knowledge_titles: dict[int, str] | None) -> str:
     lines = [
         f"## [{finding.severity.value.upper()}] {finding.title}",
         "",
@@ -16,8 +17,9 @@ def _finding_section(finding: Finding) -> str:
         f"- **Scanner:** {finding.scanner_name}",
         f"- **Detected:** {finding.created_at.isoformat()}",
     ]
-    if finding.knowledge_source_id is not None:
-        lines.append(f"- **Knowledge source:** KnowledgeItem #{finding.knowledge_source_id}")
+    label = knowledge_source_label(finding, knowledge_titles)
+    if label is not None:
+        lines.append(f"- **Knowledge source:** {label}")
     lines += ["", "**Description**", "", finding.description]
     if finding.evidence:
         lines += ["", "**Evidence**", "", finding.evidence]
@@ -36,7 +38,13 @@ def _finding_section(finding: Finding) -> str:
 class MarkdownReportGenerator:
     format_name = "markdown"
 
-    def generate(self, *, findings: list[Finding], output_path: Path) -> Path:
+    def generate(
+        self,
+        *,
+        findings: list[Finding],
+        output_path: Path,
+        knowledge_titles: dict[int, str] | None = None,
+    ) -> Path:
         ordered = sort_findings(findings)
         generated_at = datetime.now(timezone.utc).isoformat()
 
@@ -48,7 +56,7 @@ class MarkdownReportGenerator:
                 f"Total findings: {len(ordered)}",
             ]
         )
-        body = "\n\n---\n\n".join(_finding_section(finding) for finding in ordered)
+        body = "\n\n---\n\n".join(_finding_section(finding, knowledge_titles) for finding in ordered)
         document = f"{header}\n\n" + (body if body else "_No findings._\n")
 
         output_path.parent.mkdir(parents=True, exist_ok=True)

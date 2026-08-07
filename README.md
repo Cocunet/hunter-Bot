@@ -43,6 +43,11 @@ This repository is being built incrementally, phase by phase. Implemented so far
 - `hunterbot/reporting/` — a `ReportGenerator` interface with six
   implementations (Markdown, JSON, HTML, PDF, DOCX, XLSX), sorted
   most-severe-first and covering every `Finding` field
+- `hunterbot/knowledge/correlation.py` — `KnowledgeCorrelationService`, which
+  links each scan `Finding` to the best-matching `KnowledgeItem` (same
+  `VulnerabilityCategory`, most shared significant words) so scan output and
+  reports show *why* a finding matters, not just that it was found; linking
+  is additive and optional — a scan runs identically well without it
 - `hunterbot/cli/` — a Typer CLI covering scopes, sources, ingestion, search,
   revision history, scans, and reports
 
@@ -86,9 +91,12 @@ hunterbot source ingest "OWASP Top 10" ./notes/owasp-top-10-v2.md
 hunterbot knowledge history 1
 
 # scan an authorized target (refuses if the hostname has no active Scope)
+# each finding is automatically linked to the best-matching KnowledgeItem
+# from the ingested knowledge base, when one exists in the same category
 hunterbot scan run https://example.com
 
 # generate a report from stored findings, in any supported format
+# (a linked finding renders its knowledge source's title, not just its id)
 hunterbot report generate ./report.md --format markdown
 hunterbot report generate ./report.json --format json
 hunterbot report generate ./report.html --format html
@@ -146,11 +154,12 @@ SQLAlchemy directly.
 
 Every module described above from the original architecture is now
 implemented end-to-end and covered by tests, including all six report
-formats named in the original brief, optional semantic search, and an
-optional LLM-backed `KnowledgeExtractor`. What's left is further depth, not
-structure: additional scanner plugins (e.g. authentication/authorization/
-API-specific checks) — each slots into an existing interface without
-touching the rest of the system.
+formats named in the original brief, optional semantic search, an
+optional LLM-backed `KnowledgeExtractor`, and knowledge-to-finding
+correlation. What's left is further depth, not structure: additional
+scanner plugins (e.g. authentication/authorization/API-specific checks) —
+each slots into an existing interface without touching the rest of the
+system.
 
 ## Legal and ethical use
 

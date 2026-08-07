@@ -5,6 +5,7 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from hunterbot.core.domain import Finding
+from hunterbot.reporting.knowledge_labels import knowledge_source_label
 from hunterbot.reporting.ordering import sort_findings
 
 _METADATA_LABELS = (
@@ -17,7 +18,7 @@ _METADATA_LABELS = (
 )
 
 
-def _add_finding(document: Document, finding: Finding) -> None:
+def _add_finding(document: Document, finding: Finding, knowledge_titles: dict[int, str] | None) -> None:
     document.add_heading(f"[{finding.severity.value.upper()}] {finding.title}", level=2)
 
     table = document.add_table(rows=0, cols=2)
@@ -26,10 +27,11 @@ def _add_finding(document: Document, finding: Finding) -> None:
         row = table.add_row().cells
         row[0].text = label
         row[1].text = str(getter(finding))
-    if finding.knowledge_source_id is not None:
+    label = knowledge_source_label(finding, knowledge_titles)
+    if label is not None:
         row = table.add_row().cells
         row[0].text = "Knowledge source"
-        row[1].text = f"KnowledgeItem #{finding.knowledge_source_id}"
+        row[1].text = label
 
     document.add_heading("Description", level=3)
     document.add_paragraph(finding.description)
@@ -53,7 +55,13 @@ def _add_finding(document: Document, finding: Finding) -> None:
 class DOCXReportGenerator:
     format_name = "docx"
 
-    def generate(self, *, findings: list[Finding], output_path: Path) -> Path:
+    def generate(
+        self,
+        *,
+        findings: list[Finding],
+        output_path: Path,
+        knowledge_titles: dict[int, str] | None = None,
+    ) -> Path:
         ordered = sort_findings(findings)
         document = Document()
 
@@ -66,7 +74,7 @@ class DOCXReportGenerator:
         if not ordered:
             document.add_paragraph("No findings.")
         for finding in ordered:
-            _add_finding(document, finding)
+            _add_finding(document, finding, knowledge_titles)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         document.save(str(output_path))

@@ -67,8 +67,19 @@ class TestMarkdownReportGenerator:
         assert "raw evidence" in content
         assert "Patch it." in content
         assert "https://example.com/advisory" in content
+        assert "KnowledgeItem #7" in content
         # Critical should appear before Low in the rendered output.
         assert content.index("Critical severity issue") < content.index("Low severity issue")
+
+    def test_knowledge_titles_resolve_to_readable_label(self, tmp_path: Path) -> None:
+        output_path = tmp_path / "report.md"
+
+        MarkdownReportGenerator().generate(
+            findings=[_CRITICAL], output_path=output_path, knowledge_titles={7: "Missing X-Frame-Options"}
+        )
+
+        content = output_path.read_text(encoding="utf-8")
+        assert "KnowledgeItem #7 — Missing X-Frame-Options" in content
 
     def test_generate_with_no_findings(self, tmp_path: Path) -> None:
         output_path = tmp_path / "empty.md"
@@ -107,6 +118,16 @@ class TestHTMLReportGenerator:
         assert "&lt;script&gt;" in content
         assert "Critical severity issue" in content
 
+    def test_knowledge_titles_resolve_to_readable_label(self, tmp_path: Path) -> None:
+        output_path = tmp_path / "report.html"
+
+        HTMLReportGenerator().generate(
+            findings=[_CRITICAL], output_path=output_path, knowledge_titles={7: "Missing X-Frame-Options"}
+        )
+
+        content = output_path.read_text(encoding="utf-8")
+        assert "KnowledgeItem #7 — Missing X-Frame-Options" in content
+
 
 class TestDOCXReportGenerator:
     def test_generate_includes_all_findings_and_fields(self, tmp_path: Path) -> None:
@@ -132,6 +153,19 @@ class TestDOCXReportGenerator:
         document = Document(str(output_path))
         assert any("No findings" in p.text for p in document.paragraphs)
 
+    def test_knowledge_titles_resolve_to_readable_label(self, tmp_path: Path) -> None:
+        output_path = tmp_path / "report.docx"
+
+        DOCXReportGenerator().generate(
+            findings=[_CRITICAL], output_path=output_path, knowledge_titles={7: "Missing X-Frame-Options"}
+        )
+
+        document = Document(str(output_path))
+        table_text = "\n".join(
+            cell.text for table in document.tables for row in table.rows for cell in row.cells
+        )
+        assert "KnowledgeItem #7 — Missing X-Frame-Options" in table_text
+
 
 class TestXLSXReportGenerator:
     def test_generate_writes_one_row_per_finding(self, tmp_path: Path) -> None:
@@ -150,6 +184,7 @@ class TestXLSXReportGenerator:
         assert rows[0][1] == "critical"
         assert rows[0][2] == "Critical severity issue"
         assert rows[0][14] == "https://example.com/advisory"
+        assert rows[0][15] == "KnowledgeItem #7"
 
     def test_generate_with_no_findings_writes_header_only(self, tmp_path: Path) -> None:
         output_path = tmp_path / "empty.xlsx"
@@ -157,6 +192,18 @@ class TestXLSXReportGenerator:
         workbook = load_workbook(str(output_path))
         sheet = workbook["Findings"]
         assert sheet.max_row == 1
+
+    def test_knowledge_titles_resolve_to_readable_label(self, tmp_path: Path) -> None:
+        output_path = tmp_path / "report.xlsx"
+
+        XLSXReportGenerator().generate(
+            findings=[_CRITICAL], output_path=output_path, knowledge_titles={7: "Missing X-Frame-Options"}
+        )
+
+        workbook = load_workbook(str(output_path))
+        sheet = workbook["Findings"]
+        rows = list(sheet.iter_rows(min_row=2, values_only=True))
+        assert rows[0][15] == "KnowledgeItem #7 — Missing X-Frame-Options"
 
 
 class TestPDFReportGenerator:
@@ -192,6 +239,17 @@ class TestPDFReportGenerator:
 
         assert result == output_path
         assert output_path.exists()
+
+    def test_knowledge_titles_resolve_to_readable_label(self, tmp_path: Path) -> None:
+        output_path = tmp_path / "report.pdf"
+
+        PDFReportGenerator().generate(
+            findings=[_CRITICAL], output_path=output_path, knowledge_titles={7: "Missing X-Frame-Options"}
+        )
+
+        reader = PdfReader(str(output_path))
+        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        assert "Missing X-Frame-Options" in text
 
 
 class TestGetGenerator:

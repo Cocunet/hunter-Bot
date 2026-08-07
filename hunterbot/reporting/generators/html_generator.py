@@ -3,6 +3,7 @@ from html import escape
 from pathlib import Path
 
 from hunterbot.core.domain import Finding
+from hunterbot.reporting.knowledge_labels import knowledge_source_label
 from hunterbot.reporting.ordering import sort_findings
 
 _SEVERITY_COLORS = {
@@ -28,7 +29,7 @@ pre { background: #f3f4f6; padding: 0.75rem; border-radius: 6px; white-space: pr
 """
 
 
-def _finding_html(finding: Finding) -> str:
+def _finding_html(finding: Finding, knowledge_titles: dict[int, str] | None) -> str:
     severity = finding.severity.value
     color = _SEVERITY_COLORS.get(severity, "#4b5563")
     rows = [
@@ -39,8 +40,9 @@ def _finding_html(finding: Finding) -> str:
         f"<dt>Scanner</dt><dd>{escape(finding.scanner_name)}</dd>",
         f"<dt>Detected</dt><dd>{escape(finding.created_at.isoformat())}</dd>",
     ]
-    if finding.knowledge_source_id is not None:
-        rows.append(f"<dt>Knowledge source</dt><dd>KnowledgeItem #{finding.knowledge_source_id}</dd>")
+    label = knowledge_source_label(finding, knowledge_titles)
+    if label is not None:
+        rows.append(f"<dt>Knowledge source</dt><dd>{escape(label)}</dd>")
 
     sections = [f"<p>{escape(finding.description)}</p>"]
     for label, value in (
@@ -68,10 +70,16 @@ def _finding_html(finding: Finding) -> str:
 class HTMLReportGenerator:
     format_name = "html"
 
-    def generate(self, *, findings: list[Finding], output_path: Path) -> Path:
+    def generate(
+        self,
+        *,
+        findings: list[Finding],
+        output_path: Path,
+        knowledge_titles: dict[int, str] | None = None,
+    ) -> Path:
         ordered = sort_findings(findings)
         generated_at = datetime.now(timezone.utc).isoformat()
-        body = "".join(_finding_html(finding) for finding in ordered) or "<p><em>No findings.</em></p>"
+        body = "".join(_finding_html(finding, knowledge_titles) for finding in ordered) or "<p><em>No findings.</em></p>"
 
         document = f"""<!doctype html>
 <html lang="en">

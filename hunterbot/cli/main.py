@@ -12,6 +12,7 @@ from hunterbot.core.use_cases.scope_management import ListScopesUseCase, Registe
 from hunterbot.core.use_cases.source_management import ListSourcesUseCase, RegisterSourceUseCase
 from hunterbot.ingestion.connectors import connector_for_path
 from hunterbot.ingestion.pipeline import IngestionPipeline
+from hunterbot.knowledge.correlation import KnowledgeCorrelationService
 from hunterbot.knowledge.extraction import LLMExtractionError, LLMKnowledgeExtractor, RuleBasedExtractor
 from hunterbot.knowledge.search import KnowledgeSearchService, SemanticKnowledgeSearchService, TfidfSemanticIndex
 from hunterbot.plugins import default_scanners
@@ -296,6 +297,7 @@ def scan_run(
             finding_repository=SqlAlchemyFindingRepository(session),
             scanners=default_scanners(),
             http_client_factory=ScannerHttpClient,
+            knowledge_correlator=KnowledgeCorrelationService(SqlAlchemyKnowledgeRepository(session)),
         )
         try:
             findings = use_case.execute(base_url=base_url)
@@ -307,8 +309,12 @@ def scan_run(
         typer.echo("No findings.")
         return
     for finding in findings:
+        knowledge_note = (
+            f", knowledge #{finding.knowledge_source_id}" if finding.knowledge_source_id is not None else ""
+        )
         typer.echo(
-            f"[{finding.id}] {finding.severity.value.upper()} — {finding.title} ({finding.scanner_name})"
+            f"[{finding.id}] {finding.severity.value.upper()} — {finding.title} "
+            f"({finding.scanner_name}{knowledge_note})"
         )
 
 
@@ -330,6 +336,7 @@ def report_generate(
         use_case = GenerateReportUseCase(
             finding_repository=SqlAlchemyFindingRepository(session),
             report_generator=generator,
+            knowledge_repository=SqlAlchemyKnowledgeRepository(session),
         )
         result_path = use_case.execute(output_path=output, affected_asset=asset)
 

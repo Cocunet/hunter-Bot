@@ -99,6 +99,51 @@ class TestRunScanUseCase:
 
         assert created_clients[0].closed is True
 
+    def test_correlator_sets_knowledge_source_id_when_supplied(self, session: Session) -> None:
+        SqlAlchemyScopeRepository(session).add(
+            Scope(target="example.com", program_name="Acme", authorized_by="Alice")
+        )
+        authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
+        scanner = _StubScanner([_finding()])
+
+        class _StubCorrelator:
+            def __init__(self) -> None:
+                self.received: Finding | None = None
+
+            def correlate(self, finding: Finding) -> int | None:
+                self.received = finding
+                return 42
+
+        correlator = _StubCorrelator()
+        use_case = RunScanUseCase(
+            authorization_checker=authorization,
+            finding_repository=SqlAlchemyFindingRepository(session),
+            scanners=[scanner],
+            http_client_factory=lambda base_url: FakeHttpClient(),
+            knowledge_correlator=correlator,
+        )
+
+        findings = use_case.execute(base_url=_BASE_URL)
+
+        assert findings[0].knowledge_source_id == 42
+        assert correlator.received is not None
+
+    def test_no_correlator_leaves_knowledge_source_id_none(self, session: Session) -> None:
+        SqlAlchemyScopeRepository(session).add(
+            Scope(target="example.com", program_name="Acme", authorized_by="Alice")
+        )
+        authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
+        use_case = RunScanUseCase(
+            authorization_checker=authorization,
+            finding_repository=SqlAlchemyFindingRepository(session),
+            scanners=[_StubScanner([_finding()])],
+            http_client_factory=lambda base_url: FakeHttpClient(),
+        )
+
+        findings = use_case.execute(base_url=_BASE_URL)
+
+        assert findings[0].knowledge_source_id is None
+
     def test_subdomain_target_is_authorized_by_parent_domain_scope(self, session: Session) -> None:
         SqlAlchemyScopeRepository(session).add(
             Scope(target="example.com", program_name="Acme", authorized_by="Alice")
