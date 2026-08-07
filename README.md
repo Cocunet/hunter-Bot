@@ -20,10 +20,15 @@ This repository is being built incrementally, phase by phase. Implemented so far
 - `hunterbot/storage/` — SQLAlchemy models and repositories (SQLite by default)
 - `hunterbot/authorization/` — the deny-by-default scan authorization gate
 - `hunterbot/ingestion/` — Markdown/HTML/PDF connectors, text normalization, and
-  an incremental ingestion pipeline (fetch → normalize → extract → dedupe → persist)
+  an incremental ingestion pipeline (fetch → normalize → extract → learn → persist)
 - `hunterbot/knowledge/` — a rule-based `KnowledgeExtractor` (CWE/OWASP/severity
   detection via keyword heuristics, behind an interface an LLM-backed extractor
   can later implement) and keyword/metadata search
+- `hunterbot/learning/` — the continuous-learning engine: `KnowledgeDiffEngine`
+  classifies freshly extracted knowledge as new, an exact duplicate, or an
+  update to something already known (same source + title, changed content),
+  and `KnowledgeMergeService` applies that — archiving the superseded version
+  as a `KnowledgeItemRevision` before overwriting, so history is never lost
 - `hunterbot/scanners/` + `hunterbot/plugins/` — the scanner plugin framework
   (a `ScannerPlugin` Protocol, a registry, and a safety-constrained
   `ScannerHttpClient`) plus two built-in read-only plugins: missing security
@@ -31,10 +36,8 @@ This repository is being built incrementally, phase by phase. Implemented so far
 - `hunterbot/reporting/` — a `ReportGenerator` interface with Markdown, JSON,
   and HTML implementations (PDF/DOCX/XLSX land the same way in a later slice),
   sorted most-severe-first and covering every `Finding` field
-- `hunterbot/cli/` — a Typer CLI covering scopes, sources, ingestion, search, scans, and reports
-
-The learning engine (versioning/merge across re-ingestion) is designed (see
-project history) but not yet implemented — it lands in a subsequent slice.
+- `hunterbot/cli/` — a Typer CLI covering scopes, sources, ingestion, search,
+  revision history, scans, and reports
 
 ## Quick start
 
@@ -61,6 +64,11 @@ hunterbot source list
 hunterbot knowledge search --keyword injection
 hunterbot knowledge search --cwe CWE-89
 hunterbot knowledge search --category missing_security_headers
+
+# re-ingesting a revised document updates the matching item in place and
+# archives the prior version -- inspect that history:
+hunterbot source ingest "OWASP Top 10" ./notes/owasp-top-10-v2.md
+hunterbot knowledge history 1
 
 # scan an authorized target (refuses if the hostname has no active Scope)
 hunterbot scan run https://example.com
@@ -96,7 +104,18 @@ swappable without touching core logic — e.g. `RunScanUseCase` depends only
 on the `ScannerPlugin`/`HttpClient` Protocols and `GenerateReportUseCase`
 depends only on the `ReportGenerator` Protocol; the concrete `httpx`-based
 `ScannerHttpClient` and the Markdown/JSON/HTML generators are injected by
-the CLI (the composition root) instead.
+the CLI (the composition root) instead. The same pattern applies to
+`hunterbot/learning/`: `KnowledgeMergeService` depends on the
+`KnowledgeRepository`/`KnowledgeRevisionRepository` Protocols, not on
+SQLAlchemy directly.
+
+Every module described above from the original architecture is now
+implemented end-to-end and covered by tests. What's left is depth, not
+structure: additional report formats (PDF/DOCX/XLSX, same
+`ReportGenerator` pattern), a semantic/vector search layer alongside the
+existing keyword search, more scanner plugins, and an optional LLM-backed
+`KnowledgeExtractor` — each slots into an existing interface without
+touching the rest of the system.
 
 ## Legal and ethical use
 

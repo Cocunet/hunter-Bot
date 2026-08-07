@@ -45,6 +45,23 @@ class KnowledgeItemORM(Base):
     source: Mapped["SourceORM"] = relationship(back_populates="knowledge_items")
 
 
+class KnowledgeItemRevisionORM(Base):
+    __tablename__ = "knowledge_item_revisions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    knowledge_item_id: Mapped[int] = mapped_column(ForeignKey("knowledge_items.id"), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    cwe: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    owasp_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    severity_hint: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    references: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    superseded_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+
+
 class ScopeORM(Base):
     __tablename__ = "scopes"
 

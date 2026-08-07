@@ -3,6 +3,7 @@ from hunterbot.core.interfaces.extractor import KnowledgeExtractor
 from hunterbot.core.interfaces.repositories import (
     FindingRepository,
     KnowledgeRepository,
+    KnowledgeRevisionRepository,
     ScopeRepository,
     SourceRepository,
 )
@@ -15,6 +16,7 @@ __all__ = [
     "HttpClient",
     "KnowledgeExtractor",
     "KnowledgeRepository",
+    "KnowledgeRevisionRepository",
     "ReportGenerator",
     "ScannerPlugin",
     "ScannerResponse",

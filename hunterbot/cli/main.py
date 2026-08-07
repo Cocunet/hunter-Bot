@@ -20,6 +20,7 @@ from hunterbot.scanners import ScannerHttpClient
 from hunterbot.storage import (
     SqlAlchemyFindingRepository,
     SqlAlchemyKnowledgeRepository,
+    SqlAlchemyKnowledgeRevisionRepository,
     SqlAlchemyScopeRepository,
     SqlAlchemySourceRepository,
     get_session_factory,
@@ -148,13 +149,15 @@ def source_ingest(
         pipeline = IngestionPipeline(
             source_repository=source_repo,
             knowledge_repository=SqlAlchemyKnowledgeRepository(session),
+            knowledge_revision_repository=SqlAlchemyKnowledgeRevisionRepository(session),
             extractor=RuleBasedExtractor(),
         )
         result = pipeline.ingest(source=source, connector=connector)
 
     typer.echo(
         f"Ingested {path}: {result.items_extracted} extracted, "
-        f"{result.items_added} added, {result.items_deduplicated} already known"
+        f"{result.items_added} added, {result.items_updated} updated, "
+        f"{result.items_unchanged} unchanged"
     )
 
 
@@ -189,6 +192,30 @@ def knowledge_search(
             f"[{item.id}] ({item.category.value}) {item.title} "
             f"cwe={item.cwe or '-'} owasp={item.owasp_category or '-'} severity={severity_label}"
         )
+
+
+@knowledge_app.command("history")
+def knowledge_history(item_id: int) -> None:
+    """Show the revision history of a knowledge item (oldest first)."""
+    session_factory = _session_factory()
+    with session_factory() as session:
+        knowledge_repo = SqlAlchemyKnowledgeRepository(session)
+        current = knowledge_repo.get(item_id)
+        if current is None:
+            typer.secho(f"No knowledge item with id {item_id}.", fg=typer.colors.RED)
+            raise typer.Exit(code=1)
+
+        revisions = SqlAlchemyKnowledgeRevisionRepository(session).list_by_knowledge_item(item_id)
+
+    if not revisions:
+        typer.echo(f"[{item_id}] {current.title} is at version {current.version}; no prior revisions.")
+        return
+
+    for revision in revisions:
+        typer.echo(
+            f"v{revision.version} (superseded {revision.superseded_at.isoformat()}): {revision.title}"
+        )
+    typer.echo(f"v{current.version} (current): {current.title}")
 
 
 @scan_app.command("run")

@@ -7,6 +7,7 @@ from hunterbot.core.domain import (
     Confidence,
     Finding,
     KnowledgeItem,
+    KnowledgeItemRevision,
     Scope,
     ScopeStatus,
     Severity,
@@ -15,7 +16,13 @@ from hunterbot.core.domain import (
     VulnerabilityCategory,
     target_matches,
 )
-from hunterbot.storage.models import FindingORM, KnowledgeItemORM, ScopeORM, SourceORM
+from hunterbot.storage.models import (
+    FindingORM,
+    KnowledgeItemORM,
+    KnowledgeItemRevisionORM,
+    ScopeORM,
+    SourceORM,
+)
 
 
 def _source_to_domain(row: SourceORM) -> Source:
@@ -47,6 +54,23 @@ def _knowledge_item_to_domain(row: KnowledgeItemORM) -> KnowledgeItem:
         version=row.version,
         created_at=row.created_at,
         updated_at=row.updated_at,
+    )
+
+
+def _knowledge_item_revision_to_domain(row: KnowledgeItemRevisionORM) -> KnowledgeItemRevision:
+    return KnowledgeItemRevision(
+        id=row.id,
+        knowledge_item_id=row.knowledge_item_id,
+        version=row.version,
+        title=row.title,
+        summary=row.summary,
+        content_hash=row.content_hash,
+        cwe=row.cwe,
+        owasp_category=row.owasp_category,
+        severity_hint=Severity(row.severity_hint) if row.severity_hint else None,
+        tags=tuple(row.tags),
+        references=tuple(row.references),
+        superseded_at=row.superseded_at,
     )
 
 
@@ -160,6 +184,27 @@ class SqlAlchemyKnowledgeRepository:
         self._session.refresh(row)
         return _knowledge_item_to_domain(row)
 
+    def update(self, item: KnowledgeItem) -> KnowledgeItem:
+        if item.id is None:
+            raise ValueError("cannot update a knowledge item without an id")
+        row = self._session.get(KnowledgeItemORM, item.id)
+        if row is None:
+            raise ValueError(f"no knowledge item with id {item.id}")
+        row.category = item.category.value
+        row.title = item.title
+        row.summary = item.summary
+        row.content_hash = item.content_hash
+        row.cwe = item.cwe
+        row.owasp_category = item.owasp_category
+        row.severity_hint = item.severity_hint.value if item.severity_hint else None
+        row.tags = list(item.tags)
+        row.references = list(item.references)
+        row.version = item.version
+        row.updated_at = item.updated_at
+        self._session.commit()
+        self._session.refresh(row)
+        return _knowledge_item_to_domain(row)
+
     def get(self, item_id: int) -> KnowledgeItem | None:
         row = self._session.get(KnowledgeItemORM, item_id)
         return _knowledge_item_to_domain(row) if row else None
@@ -167,6 +212,14 @@ class SqlAlchemyKnowledgeRepository:
     def get_by_content_hash(self, content_hash: str) -> KnowledgeItem | None:
         row = self._session.scalar(
             select(KnowledgeItemORM).where(KnowledgeItemORM.content_hash == content_hash)
+        )
+        return _knowledge_item_to_domain(row) if row else None
+
+    def find_by_source_and_title(self, source_id: int, title: str) -> KnowledgeItem | None:
+        row = self._session.scalar(
+            select(KnowledgeItemORM).where(
+                KnowledgeItemORM.source_id == source_id, KnowledgeItemORM.title == title
+            )
         )
         return _knowledge_item_to_domain(row) if row else None
 
@@ -280,3 +333,35 @@ class SqlAlchemyFindingRepository:
     def list_all(self) -> list[Finding]:
         rows = self._session.scalars(select(FindingORM)).all()
         return [_finding_to_domain(row) for row in rows]
+
+
+class SqlAlchemyKnowledgeRevisionRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, revision: KnowledgeItemRevision) -> KnowledgeItemRevision:
+        row = KnowledgeItemRevisionORM(
+            knowledge_item_id=revision.knowledge_item_id,
+            version=revision.version,
+            title=revision.title,
+            summary=revision.summary,
+            content_hash=revision.content_hash,
+            cwe=revision.cwe,
+            owasp_category=revision.owasp_category,
+            severity_hint=revision.severity_hint.value if revision.severity_hint else None,
+            tags=list(revision.tags),
+            references=list(revision.references),
+            superseded_at=revision.superseded_at,
+        )
+        self._session.add(row)
+        self._session.commit()
+        self._session.refresh(row)
+        return _knowledge_item_revision_to_domain(row)
+
+    def list_by_knowledge_item(self, knowledge_item_id: int) -> list[KnowledgeItemRevision]:
+        rows = self._session.scalars(
+            select(KnowledgeItemRevisionORM)
+            .where(KnowledgeItemRevisionORM.knowledge_item_id == knowledge_item_id)
+            .order_by(KnowledgeItemRevisionORM.version)
+        ).all()
+        return [_knowledge_item_revision_to_domain(row) for row in rows]

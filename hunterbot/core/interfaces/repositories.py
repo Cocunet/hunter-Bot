@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from hunterbot.core.domain import Finding, KnowledgeItem, Scope, Source
+from hunterbot.core.domain import Finding, KnowledgeItem, KnowledgeItemRevision, Scope, Source
 
 
 class SourceRepository(Protocol):
@@ -30,10 +30,28 @@ class KnowledgeRepository(Protocol):
         """Persist a new knowledge item and return it with its assigned id."""
         ...
 
+    def update(self, item: KnowledgeItem) -> KnowledgeItem:
+        """Overwrite an already-registered item's fields (must have an id).
+
+        The caller (hunterbot.learning) is responsible for archiving the
+        superseded values as a KnowledgeItemRevision first — this method
+        does not do that itself.
+        """
+        ...
+
     def get(self, item_id: int) -> KnowledgeItem | None: ...
 
     def get_by_content_hash(self, content_hash: str) -> KnowledgeItem | None:
-        """Look up an existing item by content hash, for dedupe checks."""
+        """Look up an existing item by exact content hash, for dedupe checks."""
+        ...
+
+    def find_by_source_and_title(self, source_id: int, title: str) -> KnowledgeItem | None:
+        """Look up the current item that shares identity with a candidate.
+
+        Used by the learning engine to detect "this is an updated version of
+        something we already know" versus "this is brand new knowledge",
+        since content_hash alone changes whenever the text changes.
+        """
         ...
 
     def list_by_source(self, source_id: int) -> list[KnowledgeItem]: ...
@@ -78,3 +96,15 @@ class FindingRepository(Protocol):
     def list_by_asset(self, affected_asset: str) -> list[Finding]: ...
 
     def list_all(self) -> list[Finding]: ...
+
+
+class KnowledgeRevisionRepository(Protocol):
+    """Persistence contract for archived KnowledgeItem revisions."""
+
+    def add(self, revision: KnowledgeItemRevision) -> KnowledgeItemRevision:
+        """Persist a superseded revision and return it with its assigned id."""
+        ...
+
+    def list_by_knowledge_item(self, knowledge_item_id: int) -> list[KnowledgeItemRevision]:
+        """Oldest first: the full history of a KnowledgeItem's prior versions."""
+        ...
