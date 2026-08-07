@@ -20,9 +20,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+semantic = [
+    "scikit-learn>=1.4",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
+    "hunterbot[semantic]",
 ]
 
 [project.scripts]

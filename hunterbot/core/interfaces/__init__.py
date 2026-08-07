@@ -9,6 +9,7 @@ from hunterbot.core.interfaces.repositories import (
 )
 from hunterbot.core.interfaces.reporter import ReportGenerator
 from hunterbot.core.interfaces.scanner import HttpClient, ScannerPlugin, ScannerResponse
+from hunterbot.core.interfaces.semantic_index import SemanticIndex, SemanticMatch
 
 __all__ = [
     "AuthorizationChecker",
@@ -21,5 +22,7 @@ __all__ = [
     "ScannerPlugin",
     "ScannerResponse",
     "ScopeRepository",
+    "SemanticIndex",
+    "SemanticMatch",
     "SourceRepository",
 ]

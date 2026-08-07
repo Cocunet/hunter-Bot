@@ -13,7 +13,7 @@ from hunterbot.core.use_cases.source_management import ListSourcesUseCase, Regis
 from hunterbot.ingestion.connectors import connector_for_path
 from hunterbot.ingestion.pipeline import IngestionPipeline
 from hunterbot.knowledge.extraction import RuleBasedExtractor
-from hunterbot.knowledge.search import KnowledgeSearchService
+from hunterbot.knowledge.search import KnowledgeSearchService, SemanticKnowledgeSearchService, TfidfSemanticIndex
 from hunterbot.plugins import default_scanners
 from hunterbot.reporting import get_generator
 from hunterbot.scanners import ScannerHttpClient
@@ -192,6 +192,46 @@ def knowledge_search(
             f"[{item.id}] ({item.category.value}) {item.title} "
             f"cwe={item.cwe or '-'} owasp={item.owasp_category or '-'} severity={severity_label}"
         )
+
+
+@knowledge_app.command("semantic-search")
+def knowledge_semantic_search(
+    query: str = typer.Argument(..., help="Free-text query to rank the knowledge base against."),
+    top_k: int = typer.Option(10, "--top-k", help="Maximum number of results."),
+) -> None:
+    """Rank the knowledge base by similarity to a free-text query.
+
+    Optional: requires the 'semantic' extra (scikit-learn). Falls back to
+    plain keyword search over the same query text if that isn't installed.
+    """
+    session_factory = _session_factory()
+    with session_factory() as session:
+        knowledge_repo = SqlAlchemyKnowledgeRepository(session)
+        semantic_service = SemanticKnowledgeSearchService(
+            knowledge_repository=knowledge_repo, semantic_index=TfidfSemanticIndex()
+        )
+
+        if not semantic_service.is_available():
+            typer.secho(
+                "Semantic search backend not installed (pip install \"hunterbot[semantic]\"); "
+                "falling back to keyword search.",
+                fg=typer.colors.YELLOW,
+            )
+            results = KnowledgeSearchService(knowledge_repo).search(keyword=query)
+            if not results:
+                typer.echo("No matching knowledge items.")
+                return
+            for item in results[:top_k]:
+                typer.echo(f"[{item.id}] ({item.category.value}) {item.title}")
+            return
+
+        matches = semantic_service.search(query=query, top_k=top_k)
+
+    if not matches:
+        typer.echo("No matching knowledge items.")
+        return
+    for match in matches:
+        typer.echo(f"[{match.item.id}] (score={match.score:.3f}) {match.item.title}")
 
 
 @knowledge_app.command("history")

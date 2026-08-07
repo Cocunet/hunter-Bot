@@ -23,7 +23,10 @@ This repository is being built incrementally, phase by phase. Implemented so far
   an incremental ingestion pipeline (fetch → normalize → extract → learn → persist)
 - `hunterbot/knowledge/` — a rule-based `KnowledgeExtractor` (CWE/OWASP/severity
   detection via keyword heuristics, behind an interface an LLM-backed extractor
-  can later implement) and keyword/metadata search
+  can later implement); keyword/metadata search; and optional semantic search
+  (`SemanticIndex` Protocol + a TF-IDF/cosine-similarity default backend that
+  needs no model download — falls back to keyword search when its `scikit-learn`
+  dependency isn't installed, per the brief's "if a vector database is available")
 - `hunterbot/learning/` — the continuous-learning engine: `KnowledgeDiffEngine`
   classifies freshly extracted knowledge as new, an exact duplicate, or an
   update to something already known (same source + title, changed content),
@@ -65,6 +68,10 @@ hunterbot knowledge search --keyword injection
 hunterbot knowledge search --cwe CWE-89
 hunterbot knowledge search --category missing_security_headers
 
+# semantic search ranks by similarity to free text rather than exact match
+# (requires: pip install ".[semantic]"; otherwise falls back to keyword search)
+hunterbot knowledge semantic-search "database query attack"
+
 # re-ingesting a revised document updates the matching item in place and
 # archives the prior version -- inspect that history:
 hunterbot source ingest "OWASP Top 10" ./notes/owasp-top-10-v2.md
@@ -88,6 +95,12 @@ Supported ingestion file types today: `.md`/`.markdown`, `.html`/`.htm`, `.pdf`
 
 Configuration is read from environment variables prefixed `HUNTERBOT_` (or a
 `.env` file), e.g. `HUNTERBOT_DATABASE_URL=postgresql://...` to move off SQLite.
+
+Semantic search is an optional extra: `pip install ".[semantic]"` (or
+`".[dev]"`, which includes it) installs `scikit-learn`. Without it,
+`knowledge semantic-search` prints a warning and transparently falls back to
+keyword search over the same query text — the rest of HunterBot works
+identically either way.
 
 ## Running tests
 
@@ -114,11 +127,10 @@ SQLAlchemy directly.
 
 Every module described above from the original architecture is now
 implemented end-to-end and covered by tests, including all six report
-formats named in the original brief. What's left is further depth, not
-structure: a semantic/vector search layer alongside the existing keyword
-search, more scanner plugins, and an optional LLM-backed
-`KnowledgeExtractor` — each slots into an existing interface without
-touching the rest of the system.
+formats named in the original brief and optional semantic search. What's
+left is further depth, not structure: more scanner plugins and an optional
+LLM-backed `KnowledgeExtractor` — each slots into an existing interface
+without touching the rest of the system.
 
 ## Legal and ethical use
 
