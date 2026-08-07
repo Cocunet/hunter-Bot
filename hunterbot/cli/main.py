@@ -69,6 +69,13 @@ def serve(
     reload: bool = typer.Option(False, "--reload", help="Auto-reload on code changes (development only)."),
 ) -> None:
     """Run the HunterBot REST API (requires the 'api' extra)."""
+    if get_config().api_key is None:
+        typer.secho(
+            "No HUNTERBOT_API_KEY configured — this API is open to anyone who can reach it "
+            "(it can register scan scopes and run scans). Set HUNTERBOT_API_KEY before exposing "
+            "it beyond localhost.",
+            fg=typer.colors.YELLOW,
+        )
     try:
         import uvicorn
     except ImportError:

@@ -77,7 +77,10 @@ This repository is being built incrementally, phase by phase. Implemented so far
 - `hunterbot/api/` — a FastAPI REST layer (`hunterbot serve`, optional `api`
   extra) exposing the same use-cases as the CLI — scopes, sources +
   document ingestion, knowledge search, scans (`adaptive: true`), findings
-  + analysis, and report generation — with interactive docs at `/docs`
+  + analysis, and report generation — with interactive docs at `/docs`.
+  Open by default (fine for local development); set `HUNTERBOT_API_KEY` to
+  require `Authorization: Bearer <key>` on every request before exposing it
+  any further
 
 ## Quick start
 
@@ -208,6 +211,26 @@ accept connections from outside the container/host (the Docker image's
 `HUNTERBOT_DATABASE_URL` still applies — point `serve` at the same database
 the CLI uses to see the same scopes/sources/findings from both).
 
+### Authentication
+
+By default the API is **open** — anyone who can reach it can register scan
+scopes and run scans. That's fine on localhost during development; before
+exposing it any further, set `HUNTERBOT_API_KEY` and every request must then
+carry it as `Authorization: Bearer <key>` (`/docs` and `/openapi.json` are
+also disabled once a key is set, not just the data routes). `hunterbot serve`
+prints a warning on startup if no key is configured. This is authentication
+only — *can this caller use the API at all* — not authorization over which
+targets it may scan; the existing Scope/`ScopeAuthorizationService` system
+still separately governs that, unchanged.
+
+```bash
+export HUNTERBOT_API_KEY="$(openssl rand -hex 32)"
+hunterbot serve --host 0.0.0.0
+
+curl localhost:8000/scopes                                          # 401
+curl localhost:8000/scopes -H "Authorization: Bearer $HUNTERBOT_API_KEY"  # 200
+```
+
 ## Running tests
 
 ```bash
@@ -232,8 +255,10 @@ docker run --rm -v hunterbot-data:/data hunterbot scope add example.com \
 docker run --rm -v hunterbot-data:/data -v "$(pwd)/reports:/reports" hunterbot \
   report generate /reports/report.md --format markdown
 
-# or run the REST API instead of a one-off CLI command
-docker run --rm -p 8000:8000 -v hunterbot-data:/data hunterbot serve --host 0.0.0.0
+# or run the REST API instead of a one-off CLI command -- set
+# HUNTERBOT_API_KEY since --host 0.0.0.0 means it's no longer localhost-only
+docker run --rm -p 8000:8000 -v hunterbot-data:/data \
+  -e HUNTERBOT_API_KEY="$(openssl rand -hex 32)" hunterbot serve --host 0.0.0.0
 ```
 
 The image installs the `semantic`, `llm`, and `api` extras by default; pass

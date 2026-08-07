@@ -21,6 +21,11 @@ class AppConfig(BaseSettings):
     debug: bool = False
     log_level: str = "INFO"
     database_url: str = "sqlite:///./hunterbot.db"
+    api_key: str | None = None
+    """When set, hunterbot.api requires every request to carry this value as
+    an ``Authorization: Bearer <api_key>`` header. Unset (the default) means
+    the API is open — fine for local development, not for anything network-
+    reachable, since it can register Scopes and run scans."""
 
 
 @lru_cache
