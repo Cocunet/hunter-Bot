@@ -1,10 +1,12 @@
 from datetime import datetime
+from pathlib import Path
 
 import typer
 
 from hunterbot.authorization import NotAuthorizedError, ScopeAuthorizationService
 from hunterbot.config import get_config
 from hunterbot.core.domain import SourceType
+from hunterbot.core.use_cases.generate_report import GenerateReportUseCase
 from hunterbot.core.use_cases.run_scan import RunScanUseCase
 from hunterbot.core.use_cases.scope_management import ListScopesUseCase, RegisterScopeUseCase
 from hunterbot.core.use_cases.source_management import ListSourcesUseCase, RegisterSourceUseCase
@@ -13,6 +15,7 @@ from hunterbot.ingestion.pipeline import IngestionPipeline
 from hunterbot.knowledge.extraction import RuleBasedExtractor
 from hunterbot.knowledge.search import KnowledgeSearchService
 from hunterbot.plugins import default_scanners
+from hunterbot.reporting import get_generator
 from hunterbot.scanners import ScannerHttpClient
 from hunterbot.storage import (
     SqlAlchemyFindingRepository,
@@ -29,10 +32,12 @@ scope_app = typer.Typer(help="Manage authorized scan scopes.")
 source_app = typer.Typer(help="Manage registered knowledge sources.")
 knowledge_app = typer.Typer(help="Search the structured knowledge base.")
 scan_app = typer.Typer(help="Run authorized vulnerability scans.")
+report_app = typer.Typer(help="Generate vulnerability reports from stored findings.")
 app.add_typer(scope_app, name="scope")
 app.add_typer(source_app, name="source")
 app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(scan_app, name="scan")
+app.add_typer(report_app, name="report")
 
 
 def _session_factory():
@@ -217,6 +222,30 @@ def scan_run(
         typer.echo(
             f"[{finding.id}] {finding.severity.value.upper()} — {finding.title} ({finding.scanner_name})"
         )
+
+
+@report_app.command("generate")
+def report_generate(
+    output: Path = typer.Argument(..., help="File path to write the report to."),
+    format: str = typer.Option("markdown", "--format", help="markdown, json, or html."),
+    asset: str = typer.Option(None, "--asset", help="Limit the report to one affected_asset value."),
+) -> None:
+    """Generate a vulnerability report from stored findings."""
+    session_factory = _session_factory()
+    with session_factory() as session:
+        try:
+            generator = get_generator(format)
+        except ValueError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
+
+        use_case = GenerateReportUseCase(
+            finding_repository=SqlAlchemyFindingRepository(session),
+            report_generator=generator,
+        )
+        result_path = use_case.execute(output_path=output, affected_asset=asset)
+
+    typer.echo(f"Report written to {result_path}")
 
 
 if __name__ == "__main__":

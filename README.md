@@ -28,11 +28,13 @@ This repository is being built incrementally, phase by phase. Implemented so far
   (a `ScannerPlugin` Protocol, a registry, and a safety-constrained
   `ScannerHttpClient`) plus two built-in read-only plugins: missing security
   headers and sensitive/backup file exposure
-- `hunterbot/cli/` — a Typer CLI covering scopes, sources, ingestion, search, and scans
+- `hunterbot/reporting/` — a `ReportGenerator` interface with Markdown, JSON,
+  and HTML implementations (PDF/DOCX/XLSX land the same way in a later slice),
+  sorted most-severe-first and covering every `Finding` field
+- `hunterbot/cli/` — a Typer CLI covering scopes, sources, ingestion, search, scans, and reports
 
-The learning engine (versioning/merge across re-ingestion) and reporting are
-designed (see project history) but not yet implemented — they land in
-subsequent slices.
+The learning engine (versioning/merge across re-ingestion) is designed (see
+project history) but not yet implemented — it lands in a subsequent slice.
 
 ## Quick start
 
@@ -62,6 +64,12 @@ hunterbot knowledge search --category missing_security_headers
 
 # scan an authorized target (refuses if the hostname has no active Scope)
 hunterbot scan run https://example.com
+
+# generate a report from stored findings
+hunterbot report generate ./report.md --format markdown
+hunterbot report generate ./report.json --format json
+hunterbot report generate ./report.html --format html
+hunterbot report generate ./report.md --format markdown --asset https://example.com
 ```
 
 Supported ingestion file types today: `.md`/`.markdown`, `.html`/`.htm`, `.pdf`
@@ -82,12 +90,13 @@ pytest
 HunterBot follows Clean Architecture: `core/` holds domain models and
 interfaces and depends on nothing else in the tree; every other package
 (`storage/`, `authorization/`, `ingestion/`, `knowledge/`, `scanners/`,
-`plugins/`, `cli/`, and future `reporting/`) implements or consumes those
-interfaces. This keeps the storage backend, scanner plugins, and report
-formats swappable without touching core logic — e.g. `RunScanUseCase` in
-`core/use_cases/` depends only on the `ScannerPlugin` and `HttpClient`
-Protocols in `core/interfaces/`, never on the concrete `httpx`-based
-`ScannerHttpClient` in `scanners/`, which is injected by the CLI instead.
+`plugins/`, `reporting/`, `cli/`) implements or consumes those interfaces.
+This keeps the storage backend, scanner plugins, and report formats
+swappable without touching core logic — e.g. `RunScanUseCase` depends only
+on the `ScannerPlugin`/`HttpClient` Protocols and `GenerateReportUseCase`
+depends only on the `ReportGenerator` Protocol; the concrete `httpx`-based
+`ScannerHttpClient` and the Markdown/JSON/HTML generators are injected by
+the CLI (the composition root) instead.
 
 ## Legal and ethical use
 

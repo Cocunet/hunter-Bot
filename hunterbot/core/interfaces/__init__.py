@@ -6,6 +6,7 @@ from hunterbot.core.interfaces.repositories import (
     ScopeRepository,
     SourceRepository,
 )
+from hunterbot.core.interfaces.reporter import ReportGenerator
 from hunterbot.core.interfaces.scanner import HttpClient, ScannerPlugin, ScannerResponse
 
 __all__ = [
@@ -14,6 +15,7 @@ __all__ = [
     "HttpClient",
     "KnowledgeExtractor",
     "KnowledgeRepository",
+    "ReportGenerator",
     "ScannerPlugin",
     "ScannerResponse",
     "ScopeRepository",
