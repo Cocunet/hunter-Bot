@@ -1,5 +1,7 @@
 # HunterBot
 
+[![CI](https://github.com/Cocunet/hunter-Bot/actions/workflows/ci.yml/badge.svg)](https://github.com/Cocunet/hunter-Bot/actions/workflows/ci.yml)
+
 A modular, AI-assisted platform for **authorized** bug bounty and defensive
 security assessments. HunterBot ingests trusted educational security
 resources into a structured, versioned knowledge base and uses that
@@ -133,8 +135,30 @@ an error — ingestion continues.
 
 ```bash
 pip install -e ".[dev]"
+ruff check .
 pytest
 ```
+
+CI (`.github/workflows/ci.yml`) runs both of the above — lint then the full
+test suite — on every push and pull request, against Python 3.11 and 3.12.
+
+## Running with Docker
+
+```bash
+docker build -t hunterbot .
+
+# the SQLite database lives at /data/hunterbot.db inside the container;
+# mount a volume so it (and generated reports) persist across runs
+docker run --rm -v hunterbot-data:/data hunterbot init-db
+docker run --rm -v hunterbot-data:/data hunterbot scope add example.com \
+  --program "Acme Bug Bounty" --authorized-by "Alice"
+docker run --rm -v hunterbot-data:/data -v "$(pwd)/reports:/reports" hunterbot \
+  report generate /reports/report.md --format markdown
+```
+
+The image installs the `semantic` and `llm` extras by default; pass
+`ANTHROPIC_API_KEY` via `docker run -e ANTHROPIC_API_KEY=...` to use the
+LLM-backed extractor from a container.
 
 ## Architecture
 
