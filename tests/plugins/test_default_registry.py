@@ -15,4 +15,6 @@ class TestDefaultScanners:
             "cookie-security",
             "cors-misconfiguration",
             "open-redirect",
+            "http-method-tampering",
+            "admin-interface-exposure",
         }

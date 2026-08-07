@@ -38,15 +38,20 @@ This repository is being built incrementally, phase by phase. Implemented so far
   as a `KnowledgeItemRevision` before overwriting, so history is never lost
 - `hunterbot/scanners/` + `hunterbot/plugins/` — the scanner plugin framework
   (a `ScannerPlugin` Protocol, a registry, and a safety-constrained
-  `ScannerHttpClient`) plus seven built-in read-only plugins: missing security
+  `ScannerHttpClient`) plus nine built-in read-only plugins: missing security
   headers, sensitive/backup file exposure, directory listing exposure,
   information disclosure (verbose `Server`/`X-Powered-By` headers and
   well-known info-leak endpoints), cookie security (missing Secure/HttpOnly/
   SameSite), CORS misconfiguration (wildcard origin + allowed credentials),
-  and open redirect (unvalidated redirect-parameter probing — the one plugin
+  open redirect (unvalidated redirect-parameter probing — the one plugin
   that needs `HttpClient.get_no_redirect`, since the shared client otherwise
   follows 3xx responses itself and the scanner would never see the
-  vulnerable `Location` header)
+  vulnerable `Location` header), HTTP method tampering (a single OPTIONS
+  request — itself a safe, read-only method per RFC 7231 — flags PUT/DELETE/
+  TRACE/CONNECT advertised in the `Allow` header without ever issuing one),
+  and admin/debug interface exposure (Werkzeug console, Symfony profiler,
+  ELMAH, Spring Boot Actuator heap dumps, Adminer/phpMyAdmin — control
+  surfaces, not just information leaks, at well-known paths)
 - `hunterbot/reporting/` — a `ReportGenerator` interface with six
   implementations (Markdown, JSON, HTML, PDF, DOCX, XLSX), sorted
   most-severe-first and covering every `Finding` field
@@ -296,9 +301,13 @@ Findings and ScannerPlugin registry — one interprets results after a scan
 (triage, attack chains), the other narrows *which* already-vetted scanners
 run before one (adaptive selection); neither can act outside HunterBot's
 existing scanner list or authorization gate. What's left is further depth,
-not structure: additional scanner plugins (e.g. authentication/
-authorization/API-specific checks) — each slots into an existing interface
-without touching the rest of the system.
+not structure: nine scanner plugins now cover headers, file/directory
+exposure, cookies, CORS, open redirects, HTTP method tampering, and
+admin-interface exposure — further plugins (e.g. authenticated-session
+checks that need credentials the platform doesn't yet manage) and a web UI
+on top of the existing REST API are the two largest remaining pieces, and
+each slots into an existing interface without touching the rest of the
+system.
 
 ## Legal and ethical use
 

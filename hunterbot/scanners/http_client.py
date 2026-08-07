@@ -35,6 +35,16 @@ class ScannerHttpClient:
             response = self._client.get(path, follow_redirects=follow_redirects)
         except httpx.HTTPError:
             return None
+        return self._to_scanner_response(response)
+
+    def options(self, path: str) -> ScannerResponse | None:
+        try:
+            response = self._client.options(path)
+        except httpx.HTTPError:
+            return None
+        return self._to_scanner_response(response)
+
+    def _to_scanner_response(self, response: httpx.Response) -> ScannerResponse:
         return ScannerResponse(
             status_code=response.status_code,
             headers=dict(response.headers),

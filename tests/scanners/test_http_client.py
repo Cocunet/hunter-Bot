@@ -18,6 +18,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"ok")
 
+    def do_OPTIONS(self) -> None:
+        self.send_response(200)
+        self.send_header("Allow", "GET, HEAD, OPTIONS, PUT")
+        self.end_headers()
+
     def log_message(self, *args: object) -> None:
         pass
 
@@ -72,6 +77,26 @@ class TestScannerHttpClient:
         client = ScannerHttpClient("http://127.0.0.1:1")
         try:
             response = client.get("/")
+        finally:
+            client.close()
+
+        assert response is None
+
+    def test_options_returns_allow_header(self, live_server: str) -> None:
+        client = ScannerHttpClient(live_server)
+        try:
+            response = client.options("/")
+        finally:
+            client.close()
+
+        assert response is not None
+        assert response.status_code == 200
+        assert response.headers.get("allow") == "GET, HEAD, OPTIONS, PUT"
+
+    def test_options_unreachable_target_returns_none(self) -> None:
+        client = ScannerHttpClient("http://127.0.0.1:1")
+        try:
+            response = client.options("/")
         finally:
             client.close()
 

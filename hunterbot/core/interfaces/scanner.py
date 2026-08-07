@@ -35,6 +35,18 @@ class HttpClient(Protocol):
         """
         ...
 
+    def options(self, path: str) -> ScannerResponse | None:
+        """Send an HTTP OPTIONS request.
+
+        OPTIONS is defined as a safe, read-only method by RFC 7231 — it
+        asks the server what it supports rather than acting on anything —
+        so exposing it doesn't widen what a scanner can do to a target, the
+        same GET-only-in-spirit boundary this Protocol otherwise enforces.
+        Needed to read the ``Allow`` header (e.g. to flag dangerous methods
+        like PUT/DELETE/TRACE being routable at all).
+        """
+        ...
+
     def close(self) -> None: ...
 
 
