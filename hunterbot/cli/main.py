@@ -9,6 +9,7 @@ from hunterbot.config import get_config
 from hunterbot.core.domain import SourceType, target_matches
 from hunterbot.core.use_cases.analyze_findings import AnalyzeFindingsUseCase
 from hunterbot.core.use_cases.generate_report import GenerateReportUseCase
+from hunterbot.core.use_cases.run_access_control_scan import RunAccessControlScanUseCase
 from hunterbot.core.use_cases.run_scan import RunScanUseCase
 from hunterbot.core.use_cases.scope_management import ListScopesUseCase, RegisterScopeUseCase
 from hunterbot.core.use_cases.session_management import ListAuthSessionsUseCase, RegisterAuthSessionUseCase
@@ -463,6 +464,66 @@ def scan_run(
         typer.echo(
             f"[{finding.id}] {finding.severity.value.upper()} — {finding.title} "
             f"({finding.scanner_name}{knowledge_note})"
+        )
+
+
+@scan_app.command("access-control")
+def scan_access_control(
+    base_url: str = typer.Argument(..., help="Full base URL to scan, e.g. https://example.com"),
+    baseline_session_id: int = typer.Option(
+        ...,
+        "--baseline-session",
+        help="id of the AuthSession that owns the resources referenced by --path.",
+    ),
+    test_session_id: int = typer.Option(
+        ...,
+        "--test-session",
+        help="id of a second, independent AuthSession being tested for cross-account access.",
+    ),
+    path: list[str] = typer.Option(
+        ...,
+        "--path",
+        help="A resource-identifying path to test, e.g. /api/orders/1001. Repeat --path for more than one.",
+    ),
+) -> None:
+    """Flag broken access control / IDOR by replaying --path under two sessions.
+
+    For each --path, compares an unauthenticated request, one made with
+    --baseline-session, and one made with --test-session. Flags any path
+    where the second session also gets a successful response, even though
+    it should be scoped to whichever account --baseline-session belongs to.
+    Both sessions' owning scopes must authorize base_url's hostname.
+    """
+    session_factory = _session_factory()
+    with session_factory() as session:
+        authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
+        use_case = RunAccessControlScanUseCase(
+            authorization_checker=authorization,
+            auth_session_repository=SqlAlchemyAuthSessionRepository(session),
+            scope_repository=SqlAlchemyScopeRepository(session),
+            finding_repository=SqlAlchemyFindingRepository(session),
+            http_client_factory=lambda url, headers: ScannerHttpClient(url, extra_headers=headers),
+        )
+        try:
+            findings = use_case.execute(
+                base_url=base_url,
+                baseline_session_id=baseline_session_id,
+                test_session_id=test_session_id,
+                candidate_paths=path,
+            )
+        except NotAuthorizedError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
+        except ValueError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
+
+    if not findings:
+        typer.echo("No access-control issues found across the tested paths.")
+        return
+    for finding in findings:
+        typer.echo(
+            f"[{finding.id}] {finding.severity.value.upper()} ({finding.confidence.value}) — {finding.title}"
         )
 
 

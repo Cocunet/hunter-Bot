@@ -106,6 +106,21 @@ class ScanRequest(BaseModel):
     )
 
 
+class AccessControlScanRequest(BaseModel):
+    base_url: str = Field(min_length=1, description="Full base URL to scan, e.g. https://example.com")
+    baseline_session_id: int = Field(
+        description="id of the AuthSession that owns the resources referenced by candidate_paths."
+    )
+    test_session_id: int = Field(
+        description="id of a second, independent AuthSession being tested for cross-account access."
+    )
+    candidate_paths: list[str] = Field(
+        min_length=1,
+        description="Resource-identifying paths to test, e.g. ['/api/orders/1001']. Both sessions' "
+        "owning scopes must authorize base_url's hostname.",
+    )
+
+
 class ReportRequest(BaseModel):
     format: str = Field(default="markdown", description="markdown, json, html, pdf, docx, or xlsx.")
     asset: str | None = Field(default=None, description="Limit the report to one affected_asset value.")

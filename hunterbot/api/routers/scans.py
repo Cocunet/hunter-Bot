@@ -4,9 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from hunterbot.api.dependencies import get_session
-from hunterbot.api.schemas import ScanRequest
+from hunterbot.api.schemas import AccessControlScanRequest, ScanRequest
 from hunterbot.authorization import NotAuthorizedError, ScopeAuthorizationService
 from hunterbot.core.domain import Finding, target_matches
+from hunterbot.core.use_cases.run_access_control_scan import RunAccessControlScanUseCase
 from hunterbot.core.use_cases.run_scan import RunScanUseCase
 from hunterbot.knowledge.correlation import KnowledgeCorrelationService
 from hunterbot.plugins import default_scanners
@@ -84,6 +85,40 @@ def run_scan(payload: ScanRequest, session: Session = Depends(get_session)) -> l
     )
     try:
         return use_case.execute(base_url=payload.base_url)
+    except NotAuthorizedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/access-control", response_model=list[Finding])
+def run_access_control_scan(
+    payload: AccessControlScanRequest, session: Session = Depends(get_session)
+) -> list[Finding]:
+    """Flag broken access control / IDOR by replaying candidate_paths under two sessions.
+
+    For each path in ``candidate_paths``, compares an unauthenticated
+    request, one made with ``baseline_session_id``, and one made with
+    ``test_session_id``. Flags any path where the second session also gets
+    a successful response, even though it should be scoped to whichever
+    account ``baseline_session_id`` belongs to. Both sessions' owning
+    scopes must authorize ``base_url``'s hostname (403 otherwise).
+    """
+    authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
+    use_case = RunAccessControlScanUseCase(
+        authorization_checker=authorization,
+        auth_session_repository=SqlAlchemyAuthSessionRepository(session),
+        scope_repository=SqlAlchemyScopeRepository(session),
+        finding_repository=SqlAlchemyFindingRepository(session),
+        http_client_factory=lambda url, headers: ScannerHttpClient(url, extra_headers=headers),
+    )
+    try:
+        return use_case.execute(
+            base_url=payload.base_url,
+            baseline_session_id=payload.baseline_session_id,
+            test_session_id=payload.test_session_id,
+            candidate_paths=payload.candidate_paths,
+        )
     except NotAuthorizedError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except ValueError as exc:

@@ -52,6 +52,23 @@ This repository is being built incrementally, phase by phase. Implemented so far
   and admin/debug interface exposure (Werkzeug console, Symfony profiler,
   ELMAH, Spring Boot Actuator heap dumps, Adminer/phpMyAdmin — control
   surfaces, not just information leaks, at well-known paths)
+- `hunterbot/core/use_cases/run_access_control_scan.py` —
+  `RunAccessControlScanUseCase`: broken access control / IDOR detection by
+  replaying tester-supplied resource paths (e.g. `/api/orders/1001`) under
+  two registered `AuthSession`s. HunterBot doesn't crawl, so it can't guess
+  which paths are identity-scoped — the tester supplies `candidate_paths`
+  explicitly. For each path it compares three read-only GETs: unauthenticated,
+  the baseline session (the presumed resource owner), and a second,
+  independent session. A finding fires only when the baseline session
+  succeeds, the second session *also* succeeds, and the unauthenticated
+  request doesn't — i.e. the endpoint checks that *someone* is logged in but
+  not that they own the resource. Confidence is `confirmed` when the two
+  successful bodies also look like the same record (near-identical length),
+  `medium` otherwise; this is a heuristic lead for a human to verify, not
+  proof. `hunterbot scan access-control` / the API's `POST
+  /scans/access-control` run it; not a `ScannerPlugin` (it inherently needs
+  two authenticated identities at once, not the single `http_client` that
+  Protocol provides), so it isn't part of the default scanner set.
 - `hunterbot/core/domain/auth_session.py` — authenticated scanning via
   `AuthSession`: HunterBot never performs a login itself (login flows vary
   too much — CSRF tokens, MFA, OAuth — to automate safely, and doing so
@@ -155,6 +172,14 @@ hunterbot session add 1 --name admin-user --header "Cookie: session=abc123"
 hunterbot session list
 hunterbot scan run https://example.com --session 1
 
+# broken access control / IDOR: register a second session (a different
+# account than admin-user above), then replay resource paths you know
+# belong to admin-user's account under both -- flags any path the second
+# session can also read
+hunterbot session add 1 --name second-user --header "Cookie: session=def456"
+hunterbot scan access-control https://example.com \
+  --baseline-session 1 --test-session 2 --path /api/orders/1001
+
 # triage stored findings and surface attack chains with Claude
 # (requires the same 'llm' extra + API key; read-only, never re-scans)
 hunterbot findings analyze
@@ -229,6 +254,14 @@ curl -X POST localhost:8000/sessions -H "Content-Type: application/json" \
   -d '{"scope_id": 1, "name": "admin-user", "headers": {"Cookie": "session=abc123"}}'
 curl -X POST localhost:8000/scans -H "Content-Type: application/json" \
   -d '{"base_url": "https://example.com", "session_id": 1}'
+
+# broken access control / IDOR: register a second session, then replay
+# resource paths known to belong to the first session's account under both
+curl -X POST localhost:8000/sessions -H "Content-Type: application/json" \
+  -d '{"scope_id": 1, "name": "second-user", "headers": {"Cookie": "session=def456"}}'
+curl -X POST localhost:8000/scans/access-control -H "Content-Type: application/json" \
+  -d '{"base_url": "https://example.com", "baseline_session_id": 1, "test_session_id": 2, "candidate_paths": ["/api/orders/1001"]}'
+
 curl "localhost:8000/findings"
 
 curl -X POST localhost:8000/findings/analyze -H "Content-Type: application/json" -d '{}'
