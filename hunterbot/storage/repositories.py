@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from hunterbot.core.domain import (
+    AuthSession,
     Confidence,
     Finding,
     KnowledgeItem,
@@ -17,6 +18,7 @@ from hunterbot.core.domain import (
     target_matches,
 )
 from hunterbot.storage.models import (
+    AuthSessionORM,
     FindingORM,
     KnowledgeItemORM,
     KnowledgeItemRevisionORM,
@@ -104,6 +106,18 @@ def _scope_to_domain(row: ScopeORM) -> Scope:
         notes=row.notes,
         status=ScopeStatus(row.status),
         authorized_at=row.authorized_at,
+        expires_at=row.expires_at,
+    )
+
+
+def _auth_session_to_domain(row: AuthSessionORM) -> AuthSession:
+    return AuthSession(
+        id=row.id,
+        scope_id=row.scope_id,
+        name=row.name,
+        headers=dict(row.headers),
+        notes=row.notes,
+        created_at=row.created_at,
         expires_at=row.expires_at,
     )
 
@@ -291,6 +305,36 @@ class SqlAlchemyScopeRepository:
     def find_matching(self, target: str) -> list[Scope]:
         all_scopes = self.list()
         return [scope for scope in all_scopes if target_matches(scope.target, target)]
+
+
+class SqlAlchemyAuthSessionRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, session: AuthSession) -> AuthSession:
+        row = AuthSessionORM(
+            scope_id=session.scope_id,
+            name=session.name,
+            headers=dict(session.headers),
+            notes=session.notes,
+            created_at=session.created_at,
+            expires_at=session.expires_at,
+        )
+        self._session.add(row)
+        self._session.commit()
+        self._session.refresh(row)
+        return _auth_session_to_domain(row)
+
+    def get(self, session_id: int) -> AuthSession | None:
+        row = self._session.get(AuthSessionORM, session_id)
+        return _auth_session_to_domain(row) if row else None
+
+    def list(self, *, scope_id: int | None = None) -> list[AuthSession]:
+        stmt = select(AuthSessionORM)
+        if scope_id is not None:
+            stmt = stmt.where(AuthSessionORM.scope_id == scope_id)
+        rows = self._session.scalars(stmt).all()
+        return [_auth_session_to_domain(row) for row in rows]
 
 
 class SqlAlchemyFindingRepository:

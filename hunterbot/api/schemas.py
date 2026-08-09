@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from hunterbot.core.domain import KnowledgeItem, KnowledgeItemRevision, Scope, SourceType
+from hunterbot.core.domain import AuthSession, KnowledgeItem, KnowledgeItemRevision, Scope, SourceType
 
 
 class ScopeCreateRequest(BaseModel):
@@ -48,6 +48,49 @@ class KnowledgeHistoryResponse(BaseModel):
     revisions: list[KnowledgeItemRevision]
 
 
+class AuthSessionCreateRequest(BaseModel):
+    scope_id: int
+    name: str = Field(min_length=1, max_length=255)
+    headers: dict[str, str] = Field(
+        min_length=1,
+        description="HTTP headers attached to every scan request when this session is used, e.g. "
+        '{"Cookie": "session=abc123"} or {"Authorization": "Bearer ..."}. Obtained by logging in '
+        "out-of-band -- HunterBot never performs a login itself.",
+    )
+    notes: str | None = Field(default=None, max_length=1024)
+    expires_at: datetime | None = None
+
+
+class AuthSessionResponse(BaseModel):
+    """Same shape as AuthSession, but with header values redacted.
+
+    Header names are shown (so a caller can confirm what's configured);
+    values are credential material and are never returned once stored.
+    """
+
+    id: int | None
+    scope_id: int
+    name: str
+    headers: dict[str, str]
+    notes: str | None
+    created_at: datetime
+    expires_at: datetime | None
+    is_active: bool
+
+    @classmethod
+    def from_domain(cls, auth_session: AuthSession) -> "AuthSessionResponse":
+        return cls(
+            id=auth_session.id,
+            scope_id=auth_session.scope_id,
+            name=auth_session.name,
+            headers=auth_session.masked_headers(),
+            notes=auth_session.notes,
+            created_at=auth_session.created_at,
+            expires_at=auth_session.expires_at,
+            is_active=auth_session.is_currently_active(),
+        )
+
+
 class ScanRequest(BaseModel):
     base_url: str = Field(min_length=1, description="Full base URL to scan, e.g. https://example.com")
     adaptive: bool = Field(
@@ -56,6 +99,10 @@ class ScanRequest(BaseModel):
             "Use Claude to pick which registered scanners are worth running, based on a "
             "quick recon request, instead of always running all of them (requires the 'llm' extra)."
         ),
+    )
+    session_id: int | None = Field(
+        default=None,
+        description="id of a registered auth session to authenticate scan requests with.",
     )
 
 

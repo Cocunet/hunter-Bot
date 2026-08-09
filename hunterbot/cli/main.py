@@ -1,15 +1,17 @@
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import typer
 
 from hunterbot.authorization import NotAuthorizedError, ScopeAuthorizationService
 from hunterbot.config import get_config
-from hunterbot.core.domain import SourceType
+from hunterbot.core.domain import SourceType, target_matches
 from hunterbot.core.use_cases.analyze_findings import AnalyzeFindingsUseCase
 from hunterbot.core.use_cases.generate_report import GenerateReportUseCase
 from hunterbot.core.use_cases.run_scan import RunScanUseCase
 from hunterbot.core.use_cases.scope_management import ListScopesUseCase, RegisterScopeUseCase
+from hunterbot.core.use_cases.session_management import ListAuthSessionsUseCase, RegisterAuthSessionUseCase
 from hunterbot.core.use_cases.source_management import ListSourcesUseCase, RegisterSourceUseCase
 from hunterbot.ingestion.connectors import connector_for_path
 from hunterbot.ingestion.pipeline import IngestionPipeline
@@ -21,6 +23,7 @@ from hunterbot.reasoning import LLMAnalysisError, LLMFindingAnalyzer, LLMScanner
 from hunterbot.reporting import get_generator
 from hunterbot.scanners import ScannerHttpClient
 from hunterbot.storage import (
+    SqlAlchemyAuthSessionRepository,
     SqlAlchemyFindingRepository,
     SqlAlchemyKnowledgeRepository,
     SqlAlchemyKnowledgeRevisionRepository,
@@ -35,12 +38,14 @@ app = typer.Typer(help="HunterBot: authorized security assessment platform.")
 scope_app = typer.Typer(help="Manage authorized scan scopes.")
 source_app = typer.Typer(help="Manage registered knowledge sources.")
 knowledge_app = typer.Typer(help="Search the structured knowledge base.")
+session_app = typer.Typer(help="Manage authentication sessions for authenticated scanning.")
 scan_app = typer.Typer(help="Run authorized vulnerability scans.")
 findings_app = typer.Typer(help="Inspect and analyze stored findings.")
 report_app = typer.Typer(help="Generate vulnerability reports from stored findings.")
 app.add_typer(scope_app, name="scope")
 app.add_typer(source_app, name="source")
 app.add_typer(knowledge_app, name="knowledge")
+app.add_typer(session_app, name="session")
 app.add_typer(scan_app, name="scan")
 app.add_typer(findings_app, name="findings")
 app.add_typer(report_app, name="report")
@@ -132,6 +137,75 @@ def scope_check(target: str) -> None:
             typer.secho(str(exc), fg=typer.colors.RED)
             raise typer.Exit(code=1) from exc
         typer.secho(f"Authorized under scope #{scope.id} ({scope.program_name})", fg=typer.colors.GREEN)
+
+
+@session_app.command("add")
+def session_add(
+    scope_id: int = typer.Argument(..., help="id of the Scope this session authenticates against."),
+    name: str = typer.Option(..., "--name", help="Human label for this session, e.g. 'admin-user'."),
+    header: list[str] = typer.Option(
+        ...,
+        "--header",
+        help="An HTTP header to attach to every scan request, as 'Name: value'. Repeatable.",
+    ),
+    notes: str = typer.Option(None, "--notes"),
+    expires_at: datetime = typer.Option(None, "--expires-at", formats=["%Y-%m-%d"]),
+) -> None:
+    """Register externally-obtained session material for authenticated scanning.
+
+    HunterBot never logs in on your behalf -- login flows vary too much
+    (CSRF tokens, MFA, OAuth) to automate safely, and doing so would mean
+    issuing state-changing requests outside every scanner's read-only
+    boundary. Authenticate out-of-band (your browser, curl, your own
+    tooling) and paste the resulting header(s) here instead, e.g.:
+
+        hunterbot session add 1 --name admin-user --header "Cookie: session=abc123"
+
+    Use the registered session with `hunterbot scan run --session <id>`.
+    """
+    headers: dict[str, str] = {}
+    for entry in header:
+        if ":" not in entry:
+            typer.secho(f"Invalid --header {entry!r} (expected 'Name: value').", fg=typer.colors.RED)
+            raise typer.Exit(code=1)
+        key, _, value = entry.partition(":")
+        headers[key.strip()] = value.strip()
+
+    session_factory = _session_factory()
+    with session_factory() as session:
+        use_case = RegisterAuthSessionUseCase(
+            auth_session_repository=SqlAlchemyAuthSessionRepository(session),
+            scope_repository=SqlAlchemyScopeRepository(session),
+        )
+        try:
+            auth_session = use_case.execute(
+                scope_id=scope_id, name=name, headers=headers, notes=notes, expires_at=expires_at
+            )
+        except ValueError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
+    typer.echo(f"Registered session #{auth_session.id}: {auth_session.name} (scope #{auth_session.scope_id})")
+
+
+@session_app.command("list")
+def session_list(
+    scope: int = typer.Option(None, "--scope", help="Limit to sessions registered for one scope id."),
+) -> None:
+    """List registered authentication sessions. Header values are never shown here."""
+    session_factory = _session_factory()
+    with session_factory() as session:
+        auth_sessions = ListAuthSessionsUseCase(SqlAlchemyAuthSessionRepository(session)).execute(scope_id=scope)
+
+    if not auth_sessions:
+        typer.echo("No sessions registered.")
+        return
+    for auth_session in auth_sessions:
+        active = "active" if auth_session.is_currently_active() else "expired"
+        header_names = ", ".join(sorted(auth_session.headers))
+        typer.echo(
+            f"[{auth_session.id}] {auth_session.name} (scope #{auth_session.scope_id}, {active}) "
+            f"headers=[{header_names}]"
+        )
 
 
 @source_app.command("add")
@@ -320,6 +394,11 @@ def scan_run(
             "quick recon request, instead of always running all of them (requires the 'llm' extra)."
         ),
     ),
+    session_id: int = typer.Option(
+        None,
+        "--session",
+        help="id of a registered auth session (see `hunterbot session add`) to authenticate scan requests with.",
+    ),
 ) -> None:
     """Run registered scanner plugins against an authorized target.
 
@@ -336,12 +415,35 @@ def scan_run(
 
     session_factory = _session_factory()
     with session_factory() as session:
+        http_client_factory = ScannerHttpClient
+        if session_id is not None:
+            auth_session = SqlAlchemyAuthSessionRepository(session).get(session_id)
+            if auth_session is None:
+                typer.secho(f"No session with id {session_id}.", fg=typer.colors.RED)
+                raise typer.Exit(code=1)
+            if not auth_session.is_currently_active():
+                typer.secho(f"Session #{session_id} has expired.", fg=typer.colors.RED)
+                raise typer.Exit(code=1)
+            owning_scope = SqlAlchemyScopeRepository(session).get(auth_session.scope_id)
+            hostname = urlparse(base_url).hostname or ""
+            if owning_scope is None or not target_matches(owning_scope.target, hostname):
+                typer.secho(
+                    f"Session #{session_id} belongs to a scope that does not authorize "
+                    f"{hostname!r}; refusing to use it here.",
+                    fg=typer.colors.RED,
+                )
+                raise typer.Exit(code=1)
+            extra_headers = auth_session.headers
+
+            def http_client_factory(url: str) -> ScannerHttpClient:
+                return ScannerHttpClient(url, extra_headers=extra_headers)
+
         authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
         use_case = RunScanUseCase(
             authorization_checker=authorization,
             finding_repository=SqlAlchemyFindingRepository(session),
             scanners=default_scanners(),
-            http_client_factory=ScannerHttpClient,
+            http_client_factory=http_client_factory,
             knowledge_correlator=KnowledgeCorrelationService(SqlAlchemyKnowledgeRepository(session)),
             scanner_selector=scanner_selector,
         )

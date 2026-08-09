@@ -46,3 +46,21 @@ class TestScopesApi:
         )
 
         assert response.status_code == 422
+
+    def test_date_only_expiry_with_no_timezone_is_accepted(self, client) -> None:
+        # Regression test: a naive datetime (no timezone suffix, e.g. from a
+        # date-only string) must not 500 -- it should be normalized to UTC
+        # rather than crash comparing against the aware authorized_at or
+        # failing at the storage layer.
+        response = client.post(
+            "/scopes",
+            json={
+                "target": "example.com",
+                "program_name": "Acme",
+                "authorized_by": "Alice",
+                "expires_at": "2099-01-01",
+            },
+        )
+
+        assert response.status_code == 201
+        assert response.json()["expires_at"].startswith("2099-01-01")

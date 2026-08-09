@@ -75,6 +75,18 @@ class ScopeORM(Base):
     expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
 
+class AuthSessionORM(Base):
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scope_id: Mapped[int] = mapped_column(ForeignKey("scopes.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    headers: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
+    notes: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+
 class FindingORM(Base):
     __tablename__ = "findings"
 

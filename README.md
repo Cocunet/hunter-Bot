@@ -52,6 +52,16 @@ This repository is being built incrementally, phase by phase. Implemented so far
   and admin/debug interface exposure (Werkzeug console, Symfony profiler,
   ELMAH, Spring Boot Actuator heap dumps, Adminer/phpMyAdmin — control
   surfaces, not just information leaks, at well-known paths)
+- `hunterbot/core/domain/auth_session.py` — authenticated scanning via
+  `AuthSession`: HunterBot never performs a login itself (login flows vary
+  too much — CSRF tokens, MFA, OAuth — to automate safely, and doing so
+  would mean state-changing POST requests outside every scanner's
+  read-only boundary); instead an authorized tester logs in out-of-band
+  and registers the resulting header(s) (a session cookie, a bearer
+  token, ...), tied to a Scope. `hunterbot scan run --session <id>` (or
+  the API's `session_id`) then attaches them to every request a scan
+  makes — cross-checked so a session can only be used against a target
+  its own Scope actually authorizes, never a different one
 - `hunterbot/reporting/` — a `ReportGenerator` interface with six
   implementations (Markdown, JSON, HTML, PDF, DOCX, XLSX), sorted
   most-severe-first and covering every `Finding` field
@@ -78,14 +88,15 @@ This repository is being built incrementally, phase by phase. Implemented so far
     falls back to running every scanner rather than under-testing the
     target silently.
 - `hunterbot/cli/` — a Typer CLI covering scopes, sources, ingestion, search,
-  revision history, scans (`--adaptive`), findings analysis, and reports
+  auth sessions, scans (`--adaptive`, `--session`), findings analysis, and
+  reports
 - `hunterbot/api/` — a FastAPI REST layer (`hunterbot serve`, optional `api`
   extra) exposing the same use-cases as the CLI — scopes, sources +
-  document ingestion, knowledge search, scans (`adaptive: true`), findings
-  + analysis, and report generation — with interactive docs at `/docs`.
-  Open by default (fine for local development); set `HUNTERBOT_API_KEY` to
-  require `Authorization: Bearer <key>` on every request before exposing it
-  any further
+  document ingestion, knowledge search, auth sessions, scans
+  (`adaptive`/`session_id`), findings + analysis, and report generation —
+  with interactive docs at `/docs`. Open by default (fine for local
+  development); set `HUNTERBOT_API_KEY` to require `Authorization: Bearer
+  <key>` on every request before exposing it any further
 
 ## Quick start
 
@@ -136,6 +147,13 @@ hunterbot scan run https://example.com
 # (requires: pip install ".[llm]" and ANTHROPIC_API_KEY set; falls back to
 # running every scanner if selection is unavailable or fails)
 hunterbot scan run https://example.com --adaptive
+
+# authenticated scanning: log in out-of-band yourself (browser, curl, ...),
+# then register the resulting session cookie/token against a Scope --
+# HunterBot never performs the login itself (see Status above for why)
+hunterbot session add 1 --name admin-user --header "Cookie: session=abc123"
+hunterbot session list
+hunterbot scan run https://example.com --session 1
 
 # triage stored findings and surface attack chains with Claude
 # (requires the same 'llm' extra + API key; read-only, never re-scans)
@@ -203,6 +221,14 @@ curl -X POST localhost:8000/scans -H "Content-Type: application/json" \
 # the 'llm' extra + ANTHROPIC_API_KEY; safely falls back to "run all" otherwise)
 curl -X POST localhost:8000/scans -H "Content-Type: application/json" \
   -d '{"base_url": "https://example.com", "adaptive": true}'
+
+# authenticated scanning: register out-of-band session material against a
+# Scope (this is auth for the *scan target*, unrelated to the API's own
+# HUNTERBOT_API_KEY below), then reference it by id in a scan
+curl -X POST localhost:8000/sessions -H "Content-Type: application/json" \
+  -d '{"scope_id": 1, "name": "admin-user", "headers": {"Cookie": "session=abc123"}}'
+curl -X POST localhost:8000/scans -H "Content-Type: application/json" \
+  -d '{"base_url": "https://example.com", "session_id": 1}'
 curl "localhost:8000/findings"
 
 curl -X POST localhost:8000/findings/analyze -H "Content-Type: application/json" -d '{}'
@@ -303,11 +329,11 @@ run before one (adaptive selection); neither can act outside HunterBot's
 existing scanner list or authorization gate. What's left is further depth,
 not structure: nine scanner plugins now cover headers, file/directory
 exposure, cookies, CORS, open redirects, HTTP method tampering, and
-admin-interface exposure — further plugins (e.g. authenticated-session
-checks that need credentials the platform doesn't yet manage) and a web UI
-on top of the existing REST API are the two largest remaining pieces, and
-each slots into an existing interface without touching the rest of the
-system.
+admin-interface exposure, and every one of them can now run authenticated
+via `AuthSession` (`--session`/`session_id`) against a target a tester has
+already logged into out-of-band. A web UI on top of the existing REST API
+is the largest remaining piece, and slots into an existing interface
+without touching the rest of the system.
 
 ## Legal and ethical use
 

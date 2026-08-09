@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from hunterbot.core.domain.enums import ScopeStatus
+from hunterbot.core.domain.timestamps import ensure_utc
 
 
 class Scope(BaseModel):
@@ -24,6 +25,11 @@ class Scope(BaseModel):
     status: ScopeStatus = ScopeStatus.ACTIVE
     authorized_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: datetime | None = None
+
+    @field_validator("authorized_at", "expires_at", mode="before")
+    @classmethod
+    def _normalize_timezone(cls, value: datetime | None) -> datetime | None:
+        return ensure_utc(value)
 
     @model_validator(mode="after")
     def _check_expiry_after_authorization(self) -> "Scope":

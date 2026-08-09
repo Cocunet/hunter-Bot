@@ -3,6 +3,7 @@ from hunterbot.core.interfaces.authorization import AuthorizationChecker
 from hunterbot.core.interfaces.correlation import KnowledgeCorrelator
 from hunterbot.core.interfaces.extractor import KnowledgeExtractor
 from hunterbot.core.interfaces.repositories import (
+    AuthSessionRepository,
     FindingRepository,
     KnowledgeRepository,
     KnowledgeRevisionRepository,
@@ -15,6 +16,7 @@ from hunterbot.core.interfaces.scanner_selector import ScannerSelector
 from hunterbot.core.interfaces.semantic_index import SemanticIndex, SemanticMatch
 
 __all__ = [
+    "AuthSessionRepository",
     "AuthorizationChecker",
     "FindingAnalyzer",
     "FindingRepository",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from hunterbot.core.domain import Finding, KnowledgeItem, KnowledgeItemRevision, Scope, Source
+from hunterbot.core.domain import AuthSession, Finding, KnowledgeItem, KnowledgeItemRevision, Scope, Source
 
 
 class SourceRepository(Protocol):
@@ -82,6 +82,18 @@ class ScopeRepository(Protocol):
     def find_matching(self, target: str) -> list[Scope]:
         """Return all scopes whose ``target`` could authorize the given value."""
         ...
+
+
+class AuthSessionRepository(Protocol):
+    """Persistence contract for registered AuthSessions."""
+
+    def add(self, session: AuthSession) -> AuthSession:
+        """Persist a new auth session and return it with its assigned id."""
+        ...
+
+    def get(self, session_id: int) -> AuthSession | None: ...
+
+    def list(self, *, scope_id: int | None = None) -> list[AuthSession]: ...
 
 
 class FindingRepository(Protocol):

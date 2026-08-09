@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from hunterbot.api.dependencies import require_api_key
-from hunterbot.api.routers import findings, knowledge, reports, scans, scopes, sources
+from hunterbot.api.routers import findings, knowledge, reports, scans, scopes, sessions, sources
 from hunterbot.config import get_config
 
 
@@ -39,6 +39,7 @@ def create_app() -> FastAPI:
 
     app.include_router(scopes.router)
     app.include_router(sources.router)
+    app.include_router(sessions.router)
     app.include_router(knowledge.router)
     app.include_router(scans.router)
     app.include_router(reports.router)

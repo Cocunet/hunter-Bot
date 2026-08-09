@@ -16,12 +16,18 @@ class ScannerHttpClient:
     DEFAULT_TIMEOUT_SECONDS = 8.0
     MAX_REDIRECTS = 3
 
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, *, extra_headers: dict[str, str] | None = None) -> None:
+        """``extra_headers`` (e.g. from an AuthSession) are sent on every
+        request this client makes -- a session cookie or bearer token for
+        authenticated scanning. See hunterbot.core.domain.AuthSession for
+        why HunterBot accepts these rather than performing a login itself.
+        """
         self._client = httpx.Client(
             base_url=base_url,
             timeout=self.DEFAULT_TIMEOUT_SECONDS,
             follow_redirects=True,
             max_redirects=self.MAX_REDIRECTS,
+            headers=extra_headers,
         )
 
     def get(self, path: str) -> ScannerResponse | None:

@@ -13,6 +13,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Location", "/target")
             self.end_headers()
             return
+        if self.path == "/echo-headers":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(f"Cookie={self.headers.get('Cookie', '')}".encode())
+            return
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
@@ -101,3 +107,23 @@ class TestScannerHttpClient:
             client.close()
 
         assert response is None
+
+    def test_extra_headers_are_sent_on_every_request(self, live_server: str) -> None:
+        client = ScannerHttpClient(live_server, extra_headers={"Cookie": "session=abc123"})
+        try:
+            response = client.get("/echo-headers")
+        finally:
+            client.close()
+
+        assert response is not None
+        assert response.text == "Cookie=session=abc123"
+
+    def test_no_extra_headers_by_default(self, live_server: str) -> None:
+        client = ScannerHttpClient(live_server)
+        try:
+            response = client.get("/echo-headers")
+        finally:
+            client.close()
+
+        assert response is not None
+        assert response.text == "Cookie="
