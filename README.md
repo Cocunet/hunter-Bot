@@ -23,6 +23,17 @@ This repository is being built incrementally, phase by phase. Implemented so far
 - `hunterbot/authorization/` — the deny-by-default scan authorization gate
 - `hunterbot/ingestion/` — Markdown/HTML/PDF connectors, text normalization, and
   an incremental ingestion pipeline (fetch → normalize → extract → learn → persist)
+- `knowledge_sources/owasp-risk-rating-scale.md` — a bundled, ready-to-ingest
+  reference: OWASP's Risk Rating Methodology (Likelihood × Impact) applied to
+  16 real-world variants across four vulnerability classes (CORS
+  misconfiguration, XSS, race conditions, file upload → RCE), each carrying a
+  CWE id, an OWASP Top 10 tag, and a severity from low/informational through
+  critical. Written so `RuleBasedExtractor`'s keyword heuristics split it into
+  one `KnowledgeItem` per variant in the right `VulnerabilityCategory` — see
+  the Quick start below to ingest it. `tests/knowledge/test_owasp_risk_rating_source.py`
+  ingests the real file and confirms a live `cors-misconfiguration` scan
+  finding correlates to its matching entry, so an edit that breaks extraction
+  fails a test instead of silently going stale
 - `hunterbot/knowledge/` — two `KnowledgeExtractor` implementations behind the
   same interface: `RuleBasedExtractor` (default, offline, CWE/OWASP/severity
   detection via keyword heuristics) and `LLMKnowledgeExtractor` (optional,
@@ -139,6 +150,12 @@ hunterbot source list
 # or extract with Claude instead of the rule-based heuristics
 # (requires: pip install ".[llm]" and ANTHROPIC_API_KEY set)
 hunterbot source ingest "OWASP Top 10" ./notes/owasp-top-10.md --extractor llm
+
+# ingest the bundled OWASP Risk Rating reference -- 16 real CORS/XSS/race-
+# condition/file-upload variants scored from low to critical, ready to go
+hunterbot source add "OWASP Risk Rating Scale" --type documentation \
+  --url https://owasp.org/www-community/OWASP_Risk_Rating_Methodology
+hunterbot source ingest "OWASP Risk Rating Scale" ./knowledge_sources/owasp-risk-rating-scale.md
 
 # search the extracted knowledge base
 hunterbot knowledge search --keyword injection
