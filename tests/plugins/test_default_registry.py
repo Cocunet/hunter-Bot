@@ -17,4 +17,5 @@ class TestDefaultScanners:
             "open-redirect",
             "http-method-tampering",
             "admin-interface-exposure",
+            "reflected-xss",
         }
