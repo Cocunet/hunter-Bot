@@ -49,7 +49,7 @@ This repository is being built incrementally, phase by phase. Implemented so far
   as a `KnowledgeItemRevision` before overwriting, so history is never lost
 - `hunterbot/scanners/` + `hunterbot/plugins/` — the scanner plugin framework
   (a `ScannerPlugin` Protocol, a registry, and a safety-constrained
-  `ScannerHttpClient`) plus nine built-in read-only plugins: missing security
+  `ScannerHttpClient`) plus ten built-in read-only plugins: missing security
   headers, sensitive/backup file exposure, directory listing exposure,
   information disclosure (verbose `Server`/`X-Powered-By` headers and
   well-known info-leak endpoints), cookie security (missing Secure/HttpOnly/
@@ -60,9 +60,52 @@ This repository is being built incrementally, phase by phase. Implemented so far
   vulnerable `Location` header), HTTP method tampering (a single OPTIONS
   request — itself a safe, read-only method per RFC 7231 — flags PUT/DELETE/
   TRACE/CONNECT advertised in the `Allow` header without ever issuing one),
-  and admin/debug interface exposure (Werkzeug console, Symfony profiler,
-  ELMAH, Spring Boot Actuator heap dumps, Adminer/phpMyAdmin — control
-  surfaces, not just information leaks, at well-known paths)
+  admin/debug interface exposure (Werkzeug console, Symfony profiler, ELMAH,
+  Spring Boot Actuator heap dumps, Adminer/phpMyAdmin — control surfaces, not
+  just information leaks, at well-known paths), and reflected XSS (probes
+  ~14 common query parameter names with a payload that breaks HTML context;
+  a verbatim, unescaped hit in the response is strong evidence, but MEDIUM
+  confidence since the reflection point's actual browser context isn't
+  verified — confirm manually)
+
+### Active scanning — race conditions and file upload → RCE
+
+Every scanner above (and `RunAccessControlScanUseCase`) is read-only: GET
+requests only, by construction, via the `HttpClient` Protocol. Two
+vulnerability classes cannot be *confirmed* that way — winning a race
+requires actually racing a real endpoint, and confirming upload-to-RCE
+requires actually uploading a file — so `hunterbot.core.interfaces.ActiveHttpClient`
+adds a second, structurally separate Protocol (`post`/`post_multipart`,
+implemented by `hunterbot.scanners.ActiveScannerHttpClient`) that only two
+use-cases depend on. Neither is a `ScannerPlugin`, neither is part of
+`default_scanners()`, and neither runs as part of `hunterbot scan run` —
+each is its own explicitly-invoked command that tells you up front what
+it's about to do:
+
+- `RunRaceConditionScanUseCase` (`hunterbot scan race-condition` /
+  `POST /scans/race-condition`) fires real, `threading.Barrier`-synchronized
+  concurrent POST requests at a tester-supplied endpoint (2–50, default 20)
+  and counts how many succeed. A correctly-guarded single-use action should
+  reject every request after the first; if more than `--expected-max-successes`
+  (default 1) come back 2xx, that's a live, `confirmed` race — the endpoint
+  really did apply the action more than once during the scan.
+- `RunFileUploadRceScanUseCase` (`hunterbot scan file-upload-rce` /
+  `POST /scans/file-upload-rce`) uploads a canary file (PHP/JSP/ASPX) whose
+  *only* content is `echo`-ing a unique per-scan token — no shell, no
+  command execution, no persistence — to a tester-supplied upload endpoint,
+  then locates and requests the resulting file back. Three outcomes: the
+  token comes back alone (the code ran — `confirmed` **critical** RCE), the
+  token comes back wrapped in its own source tags (the extension was
+  accepted and served but not executed — `confirmed` **high**), or the
+  upload succeeded but no resulting URL could be found in the response
+  (`medium`, flagged for manual follow-up rather than silently dropped).
+
+Both require the tester to name a real, already-known endpoint — HunterBot
+still never crawls or guesses a target to write to — and both have real
+side effects on the target (the raced action really happens repeatedly; a
+real file is really left behind, with its exact location in the finding's
+evidence so it can be removed). Both print an explicit warning before
+running and require the same Scope authorization as every other scan.
 - `hunterbot/core/use_cases/run_access_control_scan.py` —
   `RunAccessControlScanUseCase`: broken access control / IDOR detection by
   replaying tester-supplied resource paths (e.g. `/api/orders/1001`) under
@@ -197,6 +240,18 @@ hunterbot session add 1 --name second-user --header "Cookie: session=def456"
 hunterbot scan access-control https://example.com \
   --baseline-session 1 --test-session 2 --path /api/orders/1001
 
+# ACTIVE SCANS -- these two send real state-changing requests, unlike every
+# command above. Race a single-use endpoint for real (the action really
+# happens up to --concurrency times); only point this at something you've
+# accepted the consequences of testing repeatedly
+hunterbot scan race-condition https://example.com \
+  --path /api/coupons/redeem --concurrency 20 --expected-max-successes 1
+
+# actually upload a harmless canary file and request it back to confirm
+# upload-to-RCE; a confirmed finding means a real file was left on the
+# target (its evidence says exactly where -- remove it afterward)
+hunterbot scan file-upload-rce https://example.com --upload-path /api/upload
+
 # triage stored findings and surface attack chains with Claude
 # (requires the same 'llm' extra + API key; read-only, never re-scans)
 hunterbot findings analyze
@@ -278,6 +333,12 @@ curl -X POST localhost:8000/sessions -H "Content-Type: application/json" \
   -d '{"scope_id": 1, "name": "second-user", "headers": {"Cookie": "session=def456"}}'
 curl -X POST localhost:8000/scans/access-control -H "Content-Type: application/json" \
   -d '{"base_url": "https://example.com", "baseline_session_id": 1, "test_session_id": 2, "candidate_paths": ["/api/orders/1001"]}'
+
+# ACTIVE SCANS -- real state-changing requests, unlike everything above
+curl -X POST localhost:8000/scans/race-condition -H "Content-Type: application/json" \
+  -d '{"base_url": "https://example.com", "path": "/api/coupons/redeem", "concurrency": 20}'
+curl -X POST localhost:8000/scans/file-upload-rce -H "Content-Type: application/json" \
+  -d '{"base_url": "https://example.com", "upload_path": "/api/upload"}'
 
 curl "localhost:8000/findings"
 

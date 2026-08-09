@@ -10,6 +10,11 @@ from hunterbot.core.domain import SourceType, target_matches
 from hunterbot.core.use_cases.analyze_findings import AnalyzeFindingsUseCase
 from hunterbot.core.use_cases.generate_report import GenerateReportUseCase
 from hunterbot.core.use_cases.run_access_control_scan import RunAccessControlScanUseCase
+from hunterbot.core.use_cases.run_file_upload_rce_scan import PAYLOAD_TYPES, RunFileUploadRceScanUseCase
+from hunterbot.core.use_cases.run_race_condition_scan import (
+    DEFAULT_CONCURRENCY,
+    RunRaceConditionScanUseCase,
+)
 from hunterbot.core.use_cases.run_scan import RunScanUseCase
 from hunterbot.core.use_cases.scope_management import ListScopesUseCase, RegisterScopeUseCase
 from hunterbot.core.use_cases.session_management import ListAuthSessionsUseCase, RegisterAuthSessionUseCase
@@ -22,7 +27,7 @@ from hunterbot.knowledge.search import KnowledgeSearchService, SemanticKnowledge
 from hunterbot.plugins import default_scanners
 from hunterbot.reasoning import LLMAnalysisError, LLMFindingAnalyzer, LLMScannerSelector, ScannerSelectionError
 from hunterbot.reporting import get_generator
-from hunterbot.scanners import ScannerHttpClient
+from hunterbot.scanners import ActiveScannerHttpClient, ScannerHttpClient
 from hunterbot.storage import (
     SqlAlchemyAuthSessionRepository,
     SqlAlchemyFindingRepository,
@@ -525,6 +530,146 @@ def scan_access_control(
         typer.echo(
             f"[{finding.id}] {finding.severity.value.upper()} ({finding.confidence.value}) — {finding.title}"
         )
+
+
+@scan_app.command("race-condition")
+def scan_race_condition(
+    base_url: str = typer.Argument(..., help="Full base URL to scan, e.g. https://example.com"),
+    path: str = typer.Option(..., "--path", help="The state-changing endpoint to race, e.g. /api/coupons/redeem."),
+    body: str = typer.Option(None, "--body", help="Raw request body sent with every concurrent POST."),
+    content_type: str = typer.Option(None, "--content-type", help="Content-Type header for --body, e.g. application/json."),
+    concurrency: int = typer.Option(
+        DEFAULT_CONCURRENCY, "--concurrency", help="How many requests to fire simultaneously (2-50)."
+    ),
+    expected_max_successes: int = typer.Option(
+        1, "--expected-max-successes", help="How many successful responses are normal (usually 1: 'usable once')."
+    ),
+    session_id: int = typer.Option(None, "--session", help="id of a registered auth session to race as."),
+) -> None:
+    """ACTIVE SCAN -- actually fires concurrent POST requests at --path.
+
+    Unlike every other `hunterbot scan` command, this one issues real,
+    state-changing requests: it performs the target action `--concurrency`
+    times, for real, to see whether more than `--expected-max-successes` of
+    them succeed. Only point this at an endpoint whose repeated real
+    execution is an accepted consequence of testing it, in a scope you
+    control.
+    """
+    typer.secho(
+        f"This will send {concurrency} real concurrent POST requests to {base_url}{path}. "
+        "The target action will actually happen up to that many times.",
+        fg=typer.colors.YELLOW,
+    )
+
+    session_factory = _session_factory()
+    with session_factory() as session:
+        authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
+        use_case = RunRaceConditionScanUseCase(
+            authorization_checker=authorization,
+            auth_session_repository=SqlAlchemyAuthSessionRepository(session),
+            scope_repository=SqlAlchemyScopeRepository(session),
+            finding_repository=SqlAlchemyFindingRepository(session),
+            active_http_client_factory=lambda url, headers: ActiveScannerHttpClient(url, extra_headers=headers),
+        )
+        try:
+            findings = use_case.execute(
+                base_url=base_url,
+                path=path,
+                body=body,
+                content_type=content_type,
+                concurrency=concurrency,
+                expected_max_successes=expected_max_successes,
+                session_id=session_id,
+            )
+        except NotAuthorizedError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
+        except ValueError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
+
+    if not findings:
+        typer.echo("No race condition confirmed -- successful responses stayed within the expected bound.")
+        return
+    for finding in findings:
+        typer.echo(f"[{finding.id}] {finding.severity.value.upper()} — {finding.title}")
+        typer.echo(f"    {finding.evidence}")
+
+
+@scan_app.command("file-upload-rce")
+def scan_file_upload_rce(
+    base_url: str = typer.Argument(..., help="Full base URL to scan, e.g. https://example.com"),
+    upload_path: str = typer.Option(..., "--upload-path", help="The multipart upload endpoint, e.g. /api/upload."),
+    field_name: str = typer.Option("file", "--field-name", help="Multipart form field name the file is sent under."),
+    payload_type: str = typer.Option(
+        "php", "--payload-type", help=f"Canary payload language: one of {', '.join(PAYLOAD_TYPES)}."
+    ),
+    fetch_path_template: str = typer.Option(
+        None,
+        "--fetch-path-template",
+        help="Template with {filename} for where uploads are served back from, e.g. /uploads/{filename}. "
+        "Only needed if the upload response doesn't already tell us where the file landed.",
+    ),
+    extra_field: list[str] = typer.Option(
+        None, "--extra-field", help="Additional static form field as name=value. Repeatable."
+    ),
+    session_id: int = typer.Option(None, "--session", help="id of a registered auth session to upload as."),
+) -> None:
+    """ACTIVE SCAN -- actually uploads a canary file to confirm upload-to-RCE.
+
+    Unlike every other `hunterbot scan` command, this one writes to the
+    target: it uploads a real file whose only content is a harmless unique
+    token (no shell, no command execution), then requests it back to check
+    whether the token was executed and echoed rather than served as inert
+    source. A confirmed finding means a real file was left on the target --
+    the finding's evidence records exactly where, so you can remove it.
+    """
+    typer.secho(
+        f"This will upload a real canary file to {base_url}{upload_path} and may leave it on the target.",
+        fg=typer.colors.YELLOW,
+    )
+
+    extra_fields: dict[str, str] = {}
+    for item in extra_field or []:
+        if "=" not in item:
+            typer.secho(f"--extra-field must be name=value, got {item!r}.", fg=typer.colors.RED)
+            raise typer.Exit(code=1)
+        key, _, value = item.partition("=")
+        extra_fields[key] = value
+
+    session_factory = _session_factory()
+    with session_factory() as session:
+        authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
+        use_case = RunFileUploadRceScanUseCase(
+            authorization_checker=authorization,
+            auth_session_repository=SqlAlchemyAuthSessionRepository(session),
+            scope_repository=SqlAlchemyScopeRepository(session),
+            finding_repository=SqlAlchemyFindingRepository(session),
+            active_http_client_factory=lambda url, headers: ActiveScannerHttpClient(url, extra_headers=headers),
+        )
+        try:
+            findings = use_case.execute(
+                base_url=base_url,
+                upload_path=upload_path,
+                field_name=field_name,
+                payload_type=payload_type,
+                extra_fields=extra_fields,
+                fetch_path_template=fetch_path_template,
+                session_id=session_id,
+            )
+        except NotAuthorizedError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
+        except ValueError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
+
+    if not findings:
+        typer.echo("No confirmed or suspected file-upload vulnerability -- see logs for what was tried.")
+        return
+    for finding in findings:
+        typer.echo(f"[{finding.id}] {finding.severity.value.upper()} ({finding.confidence.value}) — {finding.title}")
+        typer.echo(f"    {finding.evidence}")
 
 
 @findings_app.command("analyze")

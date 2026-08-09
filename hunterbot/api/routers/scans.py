@@ -4,15 +4,22 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from hunterbot.api.dependencies import get_session
-from hunterbot.api.schemas import AccessControlScanRequest, ScanRequest
+from hunterbot.api.schemas import (
+    AccessControlScanRequest,
+    FileUploadRceScanRequest,
+    RaceConditionScanRequest,
+    ScanRequest,
+)
 from hunterbot.authorization import NotAuthorizedError, ScopeAuthorizationService
 from hunterbot.core.domain import Finding, target_matches
 from hunterbot.core.use_cases.run_access_control_scan import RunAccessControlScanUseCase
+from hunterbot.core.use_cases.run_file_upload_rce_scan import RunFileUploadRceScanUseCase
+from hunterbot.core.use_cases.run_race_condition_scan import RunRaceConditionScanUseCase
 from hunterbot.core.use_cases.run_scan import RunScanUseCase
 from hunterbot.knowledge.correlation import KnowledgeCorrelationService
 from hunterbot.plugins import default_scanners
 from hunterbot.reasoning import LLMScannerSelector, ScannerSelectionError
-from hunterbot.scanners import ScannerHttpClient
+from hunterbot.scanners import ActiveScannerHttpClient, ScannerHttpClient
 from hunterbot.storage import (
     SqlAlchemyAuthSessionRepository,
     SqlAlchemyFindingRepository,
@@ -118,6 +125,78 @@ def run_access_control_scan(
             baseline_session_id=payload.baseline_session_id,
             test_session_id=payload.test_session_id,
             candidate_paths=payload.candidate_paths,
+        )
+    except NotAuthorizedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/race-condition", response_model=list[Finding])
+def run_race_condition_scan(
+    payload: RaceConditionScanRequest, session: Session = Depends(get_session)
+) -> list[Finding]:
+    """ACTIVE SCAN -- fires real concurrent POST requests at ``path``.
+
+    Unlike every other scan endpoint, this one issues state-changing
+    requests: it performs the target action ``concurrency`` times, for
+    real, to see whether more than ``expected_max_successes`` of them
+    succeed. Only point this at an endpoint whose repeated real execution
+    is an accepted consequence of testing it, in scope authorized for that.
+    """
+    authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
+    use_case = RunRaceConditionScanUseCase(
+        authorization_checker=authorization,
+        auth_session_repository=SqlAlchemyAuthSessionRepository(session),
+        scope_repository=SqlAlchemyScopeRepository(session),
+        finding_repository=SqlAlchemyFindingRepository(session),
+        active_http_client_factory=lambda url, headers: ActiveScannerHttpClient(url, extra_headers=headers),
+    )
+    try:
+        return use_case.execute(
+            base_url=payload.base_url,
+            path=payload.path,
+            body=payload.body,
+            content_type=payload.content_type,
+            concurrency=payload.concurrency,
+            expected_max_successes=payload.expected_max_successes,
+            session_id=payload.session_id,
+        )
+    except NotAuthorizedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/file-upload-rce", response_model=list[Finding])
+def run_file_upload_rce_scan(
+    payload: FileUploadRceScanRequest, session: Session = Depends(get_session)
+) -> list[Finding]:
+    """ACTIVE SCAN -- uploads a real (harmless) canary file to confirm upload-to-RCE.
+
+    Unlike every other scan endpoint, this one writes to the target: it
+    uploads a file whose only content is a harmless unique token, then
+    requests it back to check whether the token was executed and echoed
+    rather than served as inert source. A confirmed finding means a real
+    file was left on the target -- its evidence records exactly where.
+    """
+    authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
+    use_case = RunFileUploadRceScanUseCase(
+        authorization_checker=authorization,
+        auth_session_repository=SqlAlchemyAuthSessionRepository(session),
+        scope_repository=SqlAlchemyScopeRepository(session),
+        finding_repository=SqlAlchemyFindingRepository(session),
+        active_http_client_factory=lambda url, headers: ActiveScannerHttpClient(url, extra_headers=headers),
+    )
+    try:
+        return use_case.execute(
+            base_url=payload.base_url,
+            upload_path=payload.upload_path,
+            field_name=payload.field_name,
+            payload_type=payload.payload_type,
+            extra_fields=payload.extra_fields,
+            fetch_path_template=payload.fetch_path_template,
+            session_id=payload.session_id,
         )
     except NotAuthorizedError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc

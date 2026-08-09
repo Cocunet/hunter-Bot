@@ -3,6 +3,12 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from hunterbot.core.domain import AuthSession, KnowledgeItem, KnowledgeItemRevision, Scope, SourceType
+from hunterbot.core.use_cases.run_file_upload_rce_scan import PAYLOAD_TYPES
+from hunterbot.core.use_cases.run_race_condition_scan import (
+    DEFAULT_CONCURRENCY,
+    MAX_CONCURRENCY,
+    MIN_CONCURRENCY,
+)
 
 
 class ScopeCreateRequest(BaseModel):
@@ -119,6 +125,54 @@ class AccessControlScanRequest(BaseModel):
         description="Resource-identifying paths to test, e.g. ['/api/orders/1001']. Both sessions' "
         "owning scopes must authorize base_url's hostname.",
     )
+
+
+class RaceConditionScanRequest(BaseModel):
+    """ACTIVE SCAN -- this issues real, state-changing POST requests.
+
+    Fires ``concurrency`` real concurrent POSTs at ``path``, actually
+    performing the target action that many times. Only point this at an
+    endpoint whose repeated real execution is an accepted consequence of
+    testing it, in scope authorized for that.
+    """
+
+    base_url: str = Field(min_length=1, description="Full base URL to scan, e.g. https://example.com")
+    path: str = Field(min_length=1, description="The state-changing endpoint to race, e.g. /api/coupons/redeem.")
+    body: str | None = Field(default=None, description="Raw request body sent with every concurrent POST.")
+    content_type: str | None = Field(default=None, description="Content-Type header for body, e.g. application/json.")
+    concurrency: int = Field(
+        default=DEFAULT_CONCURRENCY,
+        ge=MIN_CONCURRENCY,
+        le=MAX_CONCURRENCY,
+        description="How many requests to fire simultaneously.",
+    )
+    expected_max_successes: int = Field(
+        default=1, ge=1, description="How many successful responses are normal (usually 1: 'usable once')."
+    )
+    session_id: int | None = Field(default=None, description="id of a registered auth session to race as.")
+
+
+class FileUploadRceScanRequest(BaseModel):
+    """ACTIVE SCAN -- this actually uploads a real (harmless) canary file.
+
+    Uploads a file whose only content is a unique token (no shell, no
+    command execution) and requests it back to check whether it executed.
+    A confirmed finding means a real file was left on the target -- its
+    evidence records exactly where, so it can be removed afterward.
+    """
+
+    base_url: str = Field(min_length=1, description="Full base URL to scan, e.g. https://example.com")
+    upload_path: str = Field(min_length=1, description="The multipart upload endpoint, e.g. /api/upload.")
+    field_name: str = Field(default="file", description="Multipart form field name the file is sent under.")
+    payload_type: str = Field(default="php", description=f"Canary payload language: one of {sorted(PAYLOAD_TYPES)}.")
+    extra_fields: dict[str, str] | None = Field(default=None, description="Additional static multipart form fields.")
+    fetch_path_template: str | None = Field(
+        default=None,
+        description="Template with {filename} for where uploads are served back from, e.g. "
+        "/uploads/{filename}. Only needed if the upload response doesn't already say where the "
+        "file landed.",
+    )
+    session_id: int | None = Field(default=None, description="id of a registered auth session to upload as.")
 
 
 class ReportRequest(BaseModel):

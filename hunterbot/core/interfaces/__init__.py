@@ -1,3 +1,4 @@
+from hunterbot.core.interfaces.active_scanner import ActiveHttpClient
 from hunterbot.core.interfaces.analysis import FindingAnalyzer
 from hunterbot.core.interfaces.authorization import AuthorizationChecker
 from hunterbot.core.interfaces.correlation import KnowledgeCorrelator
@@ -16,6 +17,7 @@ from hunterbot.core.interfaces.scanner_selector import ScannerSelector
 from hunterbot.core.interfaces.semantic_index import SemanticIndex, SemanticMatch
 
 __all__ = [
+    "ActiveHttpClient",
     "AuthSessionRepository",
     "AuthorizationChecker",
     "FindingAnalyzer",
