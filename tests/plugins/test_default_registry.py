@@ -20,4 +20,8 @@ class TestDefaultScanners:
             "reflected-xss",
             "sql-injection",
             "ssrf",
+            "command-injection",
+            "ldap-injection",
+            "nosql-injection",
+            "ssti",
         }
