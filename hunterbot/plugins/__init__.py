@@ -9,6 +9,8 @@ from hunterbot.plugins.http_methods.scanner import HttpMethodTamperingScanner
 from hunterbot.plugins.info_disclosure.scanner import InformationDisclosureScanner
 from hunterbot.plugins.open_redirect.scanner import OpenRedirectScanner
 from hunterbot.plugins.reflected_xss.scanner import ReflectedXssScanner
+from hunterbot.plugins.sql_injection.scanner import SqlInjectionScanner
+from hunterbot.plugins.ssrf.scanner import SsrfScanner
 from hunterbot.scanners.registry import ScannerRegistry
 
 
@@ -25,6 +27,8 @@ def default_registry() -> ScannerRegistry:
     registry.register(HttpMethodTamperingScanner())
     registry.register(AdminInterfaceExposureScanner())
     registry.register(ReflectedXssScanner())
+    registry.register(SqlInjectionScanner())
+    registry.register(SsrfScanner())
     return registry
 
 
@@ -43,6 +47,8 @@ __all__ = [
     "OpenRedirectScanner",
     "ReflectedXssScanner",
     "SensitiveFileExposureScanner",
+    "SqlInjectionScanner",
+    "SsrfScanner",
     "default_registry",
     "default_scanners",
 ]

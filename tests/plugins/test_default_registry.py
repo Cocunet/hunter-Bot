@@ -18,4 +18,6 @@ class TestDefaultScanners:
             "http-method-tampering",
             "admin-interface-exposure",
             "reflected-xss",
+            "sql-injection",
+            "ssrf",
         }

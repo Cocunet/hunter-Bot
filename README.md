@@ -62,7 +62,7 @@ This repository is being built incrementally, phase by phase. Implemented so far
   as a `KnowledgeItemRevision` before overwriting, so history is never lost
 - `hunterbot/scanners/` + `hunterbot/plugins/` — the scanner plugin framework
   (a `ScannerPlugin` Protocol, a registry, and a safety-constrained
-  `ScannerHttpClient`) plus ten built-in read-only plugins: missing security
+  `ScannerHttpClient`) plus twelve built-in read-only plugins: missing security
   headers, sensitive/backup file exposure, directory listing exposure,
   information disclosure (verbose `Server`/`X-Powered-By` headers and
   well-known info-leak endpoints), cookie security (missing Secure/HttpOnly/
@@ -75,11 +75,21 @@ This repository is being built incrementally, phase by phase. Implemented so far
   TRACE/CONNECT advertised in the `Allow` header without ever issuing one),
   admin/debug interface exposure (Werkzeug console, Symfony profiler, ELMAH,
   Spring Boot Actuator heap dumps, Adminer/phpMyAdmin — control surfaces, not
-  just information leaks, at well-known paths), and reflected XSS (probes
+  just information leaks, at well-known paths), reflected XSS (probes
   ~14 common query parameter names with a payload that breaks HTML context;
   a verbatim, unescaped hit in the response is strong evidence, but MEDIUM
   confidence since the reflection point's actual browser context isn't
-  verified — confirm manually)
+  verified — confirm manually), SQL injection (error-based only: a single
+  unescaped-quote probe per candidate parameter, flagged only when a
+  database driver's own error signature — MySQL/Postgres/MSSQL/Oracle/SQLite
+  — appears in the response and *not* in a baseline request, to keep false
+  positives near zero without issuing boolean- or time-based payloads), and
+  SSRF (two checks per candidate parameter: a non-resolving probe domain
+  whose DNS-failure signature proves the parameter drives a genuine
+  server-side fetch at all — MEDIUM, the primitive without proof of internal
+  reach — and the AWS/GCP/Azure metadata address, `169.254.169.254`, whose
+  reflected content is direct in-band proof of exposed cloud credentials —
+  CRITICAL, CONFIRMED, no out-of-band listener needed)
 
 ### Active scanning — race conditions and file upload → RCE
 
