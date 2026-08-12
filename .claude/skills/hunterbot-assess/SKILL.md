@@ -75,14 +75,17 @@ workflow on it, and don't invent session ids or paths to make it runnable.
 
 ## Active scanners are out of scope for this guided pass
 
-`hunterbot scan race-condition` and `hunterbot scan file-upload-rce` exist, but never run
-them as part of this workflow, even if the user's target looks like a good candidate (a
-coupon endpoint, an upload form). Both send real state-changing requests -- the race
-scanner actually performs a chosen action repeatedly, the upload scanner actually leaves a
-file on the target -- and both require the tester to name a specific endpoint (and, for
-uploads, a field name) that nothing in this guided pass collects or should guess. If the
-user explicitly asks for one of these by name and supplies the endpoint themselves, run it
-as its own request with its own confirmation, not folded into Steps 1-5 above.
+`hunterbot scan race-condition`, `scan file-upload-rce`, `scan xxe`, and `scan mass-assignment`
+all exist, but never run any of them as part of this workflow, even if the user's target
+looks like a good candidate (a coupon endpoint, an upload form, an XML import feature, a
+user-update endpoint). All four send real state-changing requests -- the race scanner
+actually performs a chosen action repeatedly, the upload scanner actually leaves a file on
+the target, the XXE scanner actually posts a crafted XML body, the mass-assignment scanner
+actually submits an extra field -- and all four require the tester to name a specific
+endpoint (and, for uploads/mass-assignment, a field name) that nothing in this guided pass
+collects or should guess. If the user explicitly asks for one of these by name and supplies
+the endpoint themselves, run it as its own request with its own confirmation, not folded
+into Steps 1-5 above.
 
 ## Step 3: Triage with Claude
 
@@ -131,6 +134,7 @@ it's there for the full detail.
   extra), report the actual error to the user and stop there rather than pushing forward
   with a broken pipeline -- e.g. an uninitialized database means `hunterbot init-db` needs
   to run first, which is worth surfacing, not silently working around.
-- Never run `scan race-condition` or `scan file-upload-rce` on your own initiative or as
-  part of this guided pass -- both send real state-changing requests with side effects on
-  the target, and both need an endpoint (and expected behavior) only the user can supply.
+- Never run `scan race-condition`, `scan file-upload-rce`, `scan xxe`, or
+  `scan mass-assignment` on your own initiative or as part of this guided pass -- all four
+  send real state-changing requests with side effects on the target, and all four need an
+  endpoint (and expected behavior) only the user can supply.

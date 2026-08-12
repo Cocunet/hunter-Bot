@@ -175,6 +175,43 @@ class FileUploadRceScanRequest(BaseModel):
     session_id: int | None = Field(default=None, description="id of a registered auth session to upload as.")
 
 
+class XxeScanRequest(BaseModel):
+    """ACTIVE SCAN -- this posts a real XML body with an external entity.
+
+    Compares the response to a DOCTYPE-free baseline body posted to the
+    same endpoint, and reports either a confirmed file read or evidence the
+    parser processed the external entity.
+    """
+
+    base_url: str = Field(min_length=1, description="Full base URL to scan, e.g. https://example.com")
+    target_path: str = Field(min_length=1, description="The endpoint that accepts an XML body, e.g. /api/import.")
+    session_id: int | None = Field(default=None, description="id of a registered auth session to post as.")
+
+
+class MassAssignmentScanRequest(BaseModel):
+    """ACTIVE SCAN -- this submits a real write with an extra, undocumented field.
+
+    Sends base_fields plus one injected_field/injected_value pair, and
+    confirms whether the server actually applied the extra field, either in
+    the write response itself or a follow-up GET to verify_path.
+    """
+
+    base_url: str = Field(min_length=1, description="Full base URL to scan, e.g. https://example.com")
+    target_path: str = Field(min_length=1, description="The create/update endpoint to POST to, e.g. /api/users.")
+    injected_field: str = Field(min_length=1, description="The undocumented field to test, e.g. role.")
+    injected_value: str = Field(min_length=1, description="The value to try setting it to, e.g. admin.")
+    base_fields: dict[str, str] | None = Field(
+        default=None, description="Normal request fields to send alongside the injected one."
+    )
+    method: str = Field(default="POST", description="POST, PUT, or PATCH.")
+    verify_path: str | None = Field(
+        default=None,
+        description="A GET endpoint to check afterward if the write response doesn't echo the field "
+        "back, e.g. /api/users/me.",
+    )
+    session_id: int | None = Field(default=None, description="id of a registered auth session to write as.")
+
+
 class ReportRequest(BaseModel):
     format: str = Field(default="markdown", description="markdown, json, html, pdf, docx, or xlsx.")
     asset: str | None = Field(default=None, description="Limit the report to one affected_asset value.")

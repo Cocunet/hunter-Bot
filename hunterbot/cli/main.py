@@ -11,11 +11,13 @@ from hunterbot.core.use_cases.analyze_findings import AnalyzeFindingsUseCase
 from hunterbot.core.use_cases.generate_report import GenerateReportUseCase
 from hunterbot.core.use_cases.run_access_control_scan import RunAccessControlScanUseCase
 from hunterbot.core.use_cases.run_file_upload_rce_scan import PAYLOAD_TYPES, RunFileUploadRceScanUseCase
+from hunterbot.core.use_cases.run_mass_assignment_scan import RunMassAssignmentScanUseCase
 from hunterbot.core.use_cases.run_race_condition_scan import (
     DEFAULT_CONCURRENCY,
     RunRaceConditionScanUseCase,
 )
 from hunterbot.core.use_cases.run_scan import RunScanUseCase
+from hunterbot.core.use_cases.run_xxe_scan import RunXxeScanUseCase
 from hunterbot.core.use_cases.scope_management import ListScopesUseCase, RegisterScopeUseCase
 from hunterbot.core.use_cases.session_management import ListAuthSessionsUseCase, RegisterAuthSessionUseCase
 from hunterbot.core.use_cases.source_management import ListSourcesUseCase, RegisterSourceUseCase
@@ -666,6 +668,125 @@ def scan_file_upload_rce(
 
     if not findings:
         typer.echo("No confirmed or suspected file-upload vulnerability -- see logs for what was tried.")
+        return
+    for finding in findings:
+        typer.echo(f"[{finding.id}] {finding.severity.value.upper()} ({finding.confidence.value}) — {finding.title}")
+        typer.echo(f"    {finding.evidence}")
+
+
+@scan_app.command("xxe")
+def scan_xxe(
+    base_url: str = typer.Argument(..., help="Full base URL to scan, e.g. https://example.com"),
+    target_path: str = typer.Option(..., "--path", help="The endpoint that accepts an XML body, e.g. /api/import."),
+    session_id: int = typer.Option(None, "--session", help="id of a registered auth session to post as."),
+) -> None:
+    """ACTIVE SCAN -- posts a real XML body with an external entity to confirm XXE.
+
+    Unlike the read-only injection scanners in `scan run`, this one writes
+    to the target: it POSTs a DOCTYPE declaring an external entity pointing
+    at /etc/passwd, and compares the response against a DOCTYPE-free
+    baseline body posted to the same endpoint.
+    """
+    typer.secho(
+        f"This will POST a crafted XML body (external entity, targeting /etc/passwd) to {base_url}{target_path}.",
+        fg=typer.colors.YELLOW,
+    )
+
+    session_factory = _session_factory()
+    with session_factory() as session:
+        authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
+        use_case = RunXxeScanUseCase(
+            authorization_checker=authorization,
+            auth_session_repository=SqlAlchemyAuthSessionRepository(session),
+            scope_repository=SqlAlchemyScopeRepository(session),
+            finding_repository=SqlAlchemyFindingRepository(session),
+            active_http_client_factory=lambda url, headers: ActiveScannerHttpClient(url, extra_headers=headers),
+        )
+        try:
+            findings = use_case.execute(base_url=base_url, target_path=target_path, session_id=session_id)
+        except NotAuthorizedError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
+        except ValueError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
+
+    if not findings:
+        typer.echo("No XXE confirmed against this endpoint.")
+        return
+    for finding in findings:
+        typer.echo(f"[{finding.id}] {finding.severity.value.upper()} ({finding.confidence.value}) — {finding.title}")
+        typer.echo(f"    {finding.evidence}")
+
+
+@scan_app.command("mass-assignment")
+def scan_mass_assignment(
+    base_url: str = typer.Argument(..., help="Full base URL to scan, e.g. https://example.com"),
+    target_path: str = typer.Option(..., "--path", help="The create/update endpoint to POST to, e.g. /api/users."),
+    injected_field: str = typer.Option(..., "--field", help="The undocumented field to test, e.g. role."),
+    injected_value: str = typer.Option(..., "--value", help="The value to try setting it to, e.g. admin."),
+    base_field: list[str] = typer.Option(
+        None, "--base-field", help="A normal request field as name=value, alongside the injected one. Repeatable."
+    ),
+    method: str = typer.Option("POST", "--method", help="POST, PUT, or PATCH."),
+    verify_path: str = typer.Option(
+        None,
+        "--verify-path",
+        help="A GET endpoint to check afterward if the write response doesn't echo the field back, "
+        "e.g. /api/users/me.",
+    ),
+    session_id: int = typer.Option(None, "--session", help="id of a registered auth session to write as."),
+) -> None:
+    """ACTIVE SCAN -- submits a real write with an extra privilege-shaped field to confirm mass assignment.
+
+    Unlike every read-only scanner in `scan run`, this one writes to the
+    target: it sends --field/--value alongside the normal request fields
+    and checks whether the server actually applied it.
+    """
+    typer.secho(
+        f"This will send a real {method.upper()} to {base_url}{target_path} with '{injected_field}': "
+        f"{injected_value!r} added to the request body.",
+        fg=typer.colors.YELLOW,
+    )
+
+    base_fields: dict[str, str] = {}
+    for item in base_field or []:
+        if "=" not in item:
+            typer.secho(f"--base-field must be name=value, got {item!r}.", fg=typer.colors.RED)
+            raise typer.Exit(code=1)
+        key, _, value = item.partition("=")
+        base_fields[key] = value
+
+    session_factory = _session_factory()
+    with session_factory() as session:
+        authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
+        use_case = RunMassAssignmentScanUseCase(
+            authorization_checker=authorization,
+            auth_session_repository=SqlAlchemyAuthSessionRepository(session),
+            scope_repository=SqlAlchemyScopeRepository(session),
+            finding_repository=SqlAlchemyFindingRepository(session),
+            active_http_client_factory=lambda url, headers: ActiveScannerHttpClient(url, extra_headers=headers),
+        )
+        try:
+            findings = use_case.execute(
+                base_url=base_url,
+                target_path=target_path,
+                injected_field=injected_field,
+                injected_value=injected_value,
+                base_fields=base_fields,
+                method=method,
+                verify_path=verify_path,
+                session_id=session_id,
+            )
+        except NotAuthorizedError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
+        except ValueError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
+
+    if not findings:
+        typer.echo("No mass assignment confirmed against this endpoint.")
         return
     for finding in findings:
         typer.echo(f"[{finding.id}] {finding.severity.value.upper()} ({finding.confidence.value}) — {finding.title}")

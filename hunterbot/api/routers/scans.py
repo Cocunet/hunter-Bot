@@ -7,15 +7,19 @@ from hunterbot.api.dependencies import get_session
 from hunterbot.api.schemas import (
     AccessControlScanRequest,
     FileUploadRceScanRequest,
+    MassAssignmentScanRequest,
     RaceConditionScanRequest,
     ScanRequest,
+    XxeScanRequest,
 )
 from hunterbot.authorization import NotAuthorizedError, ScopeAuthorizationService
 from hunterbot.core.domain import Finding, target_matches
 from hunterbot.core.use_cases.run_access_control_scan import RunAccessControlScanUseCase
 from hunterbot.core.use_cases.run_file_upload_rce_scan import RunFileUploadRceScanUseCase
+from hunterbot.core.use_cases.run_mass_assignment_scan import RunMassAssignmentScanUseCase
 from hunterbot.core.use_cases.run_race_condition_scan import RunRaceConditionScanUseCase
 from hunterbot.core.use_cases.run_scan import RunScanUseCase
+from hunterbot.core.use_cases.run_xxe_scan import RunXxeScanUseCase
 from hunterbot.knowledge.correlation import KnowledgeCorrelationService
 from hunterbot.plugins import default_scanners
 from hunterbot.reasoning import LLMScannerSelector, ScannerSelectionError
@@ -196,6 +200,71 @@ def run_file_upload_rce_scan(
             payload_type=payload.payload_type,
             extra_fields=payload.extra_fields,
             fetch_path_template=payload.fetch_path_template,
+            session_id=payload.session_id,
+        )
+    except NotAuthorizedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/xxe", response_model=list[Finding])
+def run_xxe_scan(payload: XxeScanRequest, session: Session = Depends(get_session)) -> list[Finding]:
+    """ACTIVE SCAN -- posts a real XML body with an external entity to confirm XXE.
+
+    Unlike every read-only scan endpoint, this one writes to the target: it
+    POSTs a DOCTYPE declaring an external entity pointing at /etc/passwd
+    and compares the response against a DOCTYPE-free baseline body posted
+    to the same endpoint.
+    """
+    authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
+    use_case = RunXxeScanUseCase(
+        authorization_checker=authorization,
+        auth_session_repository=SqlAlchemyAuthSessionRepository(session),
+        scope_repository=SqlAlchemyScopeRepository(session),
+        finding_repository=SqlAlchemyFindingRepository(session),
+        active_http_client_factory=lambda url, headers: ActiveScannerHttpClient(url, extra_headers=headers),
+    )
+    try:
+        return use_case.execute(
+            base_url=payload.base_url,
+            target_path=payload.target_path,
+            session_id=payload.session_id,
+        )
+    except NotAuthorizedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/mass-assignment", response_model=list[Finding])
+def run_mass_assignment_scan(
+    payload: MassAssignmentScanRequest, session: Session = Depends(get_session)
+) -> list[Finding]:
+    """ACTIVE SCAN -- submits a real write with an extra, undocumented field to confirm mass assignment.
+
+    Unlike every read-only scan endpoint, this one writes to the target: it
+    sends ``injected_field``/``injected_value`` alongside ``base_fields``
+    and checks whether the server actually applied the extra field, either
+    in the write response itself or a follow-up GET to ``verify_path``.
+    """
+    authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
+    use_case = RunMassAssignmentScanUseCase(
+        authorization_checker=authorization,
+        auth_session_repository=SqlAlchemyAuthSessionRepository(session),
+        scope_repository=SqlAlchemyScopeRepository(session),
+        finding_repository=SqlAlchemyFindingRepository(session),
+        active_http_client_factory=lambda url, headers: ActiveScannerHttpClient(url, extra_headers=headers),
+    )
+    try:
+        return use_case.execute(
+            base_url=payload.base_url,
+            target_path=payload.target_path,
+            injected_field=payload.injected_field,
+            injected_value=payload.injected_value,
+            base_fields=payload.base_fields,
+            method=payload.method,
+            verify_path=payload.verify_path,
             session_id=payload.session_id,
         )
     except NotAuthorizedError as exc:

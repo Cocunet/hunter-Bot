@@ -62,7 +62,7 @@ This repository is being built incrementally, phase by phase. Implemented so far
   as a `KnowledgeItemRevision` before overwriting, so history is never lost
 - `hunterbot/scanners/` + `hunterbot/plugins/` — the scanner plugin framework
   (a `ScannerPlugin` Protocol, a registry, and a safety-constrained
-  `ScannerHttpClient`) plus twelve built-in read-only plugins: missing security
+  `ScannerHttpClient`) plus sixteen built-in read-only plugins: missing security
   headers, sensitive/backup file exposure, directory listing exposure,
   information disclosure (verbose `Server`/`X-Powered-By` headers and
   well-known info-leak endpoints), cookie security (missing Secure/HttpOnly/
@@ -83,27 +83,45 @@ This repository is being built incrementally, phase by phase. Implemented so far
   unescaped-quote probe per candidate parameter, flagged only when a
   database driver's own error signature — MySQL/Postgres/MSSQL/Oracle/SQLite
   — appears in the response and *not* in a baseline request, to keep false
-  positives near zero without issuing boolean- or time-based payloads), and
+  positives near zero without issuing boolean- or time-based payloads),
   SSRF (two checks per candidate parameter: a non-resolving probe domain
   whose DNS-failure signature proves the parameter drives a genuine
   server-side fetch at all — MEDIUM, the primitive without proof of internal
   reach — and the AWS/GCP/Azure metadata address, `169.254.169.254`, whose
   reflected content is direct in-band proof of exposed cloud credentials —
-  CRITICAL, CONFIRMED, no out-of-band listener needed)
+  CRITICAL, CONFIRMED, no out-of-band listener needed), OS command injection
+  (time-based blind: a `sleep`-shaped payload per candidate parameter,
+  measured against a baseline and required to clear the delay threshold
+  twice in a row — two independent slow responses — before being reported,
+  since timing alone is noisier evidence than a direct reflection or error
+  match), LDAP injection (the same error-based technique as SQL injection,
+  aimed at LDAP driver error strings instead of a database's), NoSQL
+  injection (MongoDB-style bracket-operator probes — `param[$ne]=1`,
+  `param[$where]=1` — substituted for candidate parameters, purely via GET;
+  the same error-signature-vs-baseline technique once more), and SSTI
+  (an arithmetic template expression — `1337*1337`, expressed in
+  Jinja2/Twig, FreeMarker/EL, and ERB syntax — flagged only when the
+  *computed result* `1787569` appears while the raw payload text doesn't,
+  which rules out plain unescaped reflection and makes a hit essentially
+  unambiguous; CONFIRMED confidence, the only read-only scanner to earn it)
 
-### Active scanning — race conditions and file upload → RCE
+### Active scanning — race conditions, file upload → RCE, XXE, mass assignment
 
 Every scanner above (and `RunAccessControlScanUseCase`) is read-only: GET
-requests only, by construction, via the `HttpClient` Protocol. Two
+requests only, by construction, via the `HttpClient` Protocol. Four
 vulnerability classes cannot be *confirmed* that way — winning a race
-requires actually racing a real endpoint, and confirming upload-to-RCE
-requires actually uploading a file — so `hunterbot.core.interfaces.ActiveHttpClient`
-adds a second, structurally separate Protocol (`post`/`post_multipart`,
-implemented by `hunterbot.scanners.ActiveScannerHttpClient`) that only two
-use-cases depend on. Neither is a `ScannerPlugin`, neither is part of
-`default_scanners()`, and neither runs as part of `hunterbot scan run` —
-each is its own explicitly-invoked command that tells you up front what
-it's about to do:
+requires actually racing a real endpoint, confirming upload-to-RCE requires
+actually uploading a file, confirming XXE means actually posting a crafted
+XML body (real-world XXE overwhelmingly lives in POST bodies, not GET
+parameters), and confirming mass assignment means actually submitting an
+extra field and checking whether it took effect — so
+`hunterbot.core.interfaces.ActiveHttpClient` adds a second, structurally
+separate Protocol (`post`/`post_multipart`, implemented by
+`hunterbot.scanners.ActiveScannerHttpClient`) that only these four
+use-cases depend on. None is a `ScannerPlugin`, none is part of
+`default_scanners()`, and none runs as part of `hunterbot scan run` — each
+is its own explicitly-invoked command that tells you up front what it's
+about to do:
 
 - `RunRaceConditionScanUseCase` (`hunterbot scan race-condition` /
   `POST /scans/race-condition`) fires real, `threading.Barrier`-synchronized
@@ -122,13 +140,30 @@ it's about to do:
   accepted and served but not executed — `confirmed` **high**), or the
   upload succeeded but no resulting URL could be found in the response
   (`medium`, flagged for manual follow-up rather than silently dropped).
+- `RunXxeScanUseCase` (`hunterbot scan xxe` / `POST /scans/xxe`) POSTs a
+  DOCTYPE declaring an external entity targeting `/etc/passwd` (the
+  industry-standard, non-destructive XXE proof file) to a tester-named
+  endpoint, comparing the response against a DOCTYPE-free baseline body
+  posted to the same endpoint. `/etc/passwd`'s own content coming back is
+  `confirmed` **critical**; an XML parser error signature with no file
+  content is `medium` (the parser reached the entity, but nothing was
+  proven read).
+- `RunMassAssignmentScanUseCase` (`hunterbot scan mass-assignment` /
+  `POST /scans/mass-assignment`) submits the tester's normal request fields
+  plus one extra, undocumented field (`--field role --value admin`) to a
+  create/update endpoint, and checks whether the server actually applied
+  it — first in the write response itself, then (if given `--verify-path`)
+  in a follow-up GET. No finding is reported unless the field's effect is
+  directly observed; a request that's merely accepted without visible
+  evidence isn't treated as a lead.
 
-Both require the tester to name a real, already-known endpoint — HunterBot
-still never crawls or guesses a target to write to — and both have real
-side effects on the target (the raced action really happens repeatedly; a
-real file is really left behind, with its exact location in the finding's
-evidence so it can be removed). Both print an explicit warning before
-running and require the same Scope authorization as every other scan.
+All four require the tester to name a real, already-known endpoint —
+HunterBot still never crawls or guesses a target to write to — and all four
+have real side effects on the target (the raced action really happens
+repeatedly; a real file is really left behind, with its exact location in
+the finding's evidence so it can be removed; a real field really gets set).
+All four print an explicit warning before running and require the same
+Scope authorization as every other scan.
 - `hunterbot/core/use_cases/run_access_control_scan.py` —
   `RunAccessControlScanUseCase`: broken access control / IDOR detection by
   replaying tester-supplied resource paths (e.g. `/api/orders/1001`) under
@@ -282,6 +317,14 @@ hunterbot scan race-condition https://example.com \
 # target (its evidence says exactly where -- remove it afterward)
 hunterbot scan file-upload-rce https://example.com --upload-path /api/upload
 
+# actually post a crafted XML body targeting /etc/passwd to confirm XXE
+hunterbot scan xxe https://example.com --path /api/import
+
+# actually submit an extra, undocumented field to confirm mass assignment
+hunterbot scan mass-assignment https://example.com \
+  --path /api/users --field role --value admin --base-field name=bob \
+  --verify-path /api/users/me
+
 # triage stored findings and surface attack chains with Claude
 # (requires the same 'llm' extra + API key; read-only, never re-scans)
 hunterbot findings analyze
@@ -369,6 +412,10 @@ curl -X POST localhost:8000/scans/race-condition -H "Content-Type: application/j
   -d '{"base_url": "https://example.com", "path": "/api/coupons/redeem", "concurrency": 20}'
 curl -X POST localhost:8000/scans/file-upload-rce -H "Content-Type: application/json" \
   -d '{"base_url": "https://example.com", "upload_path": "/api/upload"}'
+curl -X POST localhost:8000/scans/xxe -H "Content-Type: application/json" \
+  -d '{"base_url": "https://example.com", "target_path": "/api/import"}'
+curl -X POST localhost:8000/scans/mass-assignment -H "Content-Type: application/json" \
+  -d '{"base_url": "https://example.com", "target_path": "/api/users", "injected_field": "role", "injected_value": "admin", "base_fields": {"name": "bob"}, "verify_path": "/api/users/me"}'
 
 curl "localhost:8000/findings"
 
