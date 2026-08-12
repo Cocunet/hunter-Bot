@@ -29,7 +29,12 @@ def _make_race_handler():
                         state["guarded_count"] += 1
             elif self.path == "/api/redeem-unguarded":
                 current = state["unguarded_count"]
-                time.sleep(0.02)
+                # Wide enough that every concurrent request reliably
+                # finishes its "read" before any of them "writes", even
+                # under the scheduling jitter of a loaded CI/test-suite run
+                # -- too narrow a window here makes the test flaky, not the
+                # scanner it's testing.
+                time.sleep(0.15)
                 state["unguarded_count"] = current + 1
                 success = current < 1
             else:

@@ -34,6 +34,19 @@ This repository is being built incrementally, phase by phase. Implemented so far
   ingests the real file and confirms a live `cors-misconfiguration` scan
   finding correlates to its matching entry, so an edit that breaks extraction
   fails a test instead of silently going stale
+- `knowledge_sources/wstg-vulnerability-methodology.md` — a second bundled
+  reference: 50 vulnerability classes (SQLi through cloud IAM
+  misconfiguration) each mapped to its real OWASP WSTG test ID(s) (verified
+  against the live WSTG checklist, not recalled from memory), a CWE
+  reference, how a tester actually finds and confirms it, and whether
+  HunterBot already automates any part of that today — a working
+  cross-reference between "what's known" and "what's built" rather than a
+  plain glossary. `tests/knowledge/test_wstg_methodology_source.py` ingests
+  the real file and asserts all 50 numbered items are still traceable in
+  what got extracted, since it's easy to describe a vulnerability accurately
+  in prose without ever using one of `RuleBasedExtractor`'s fixed keyword
+  phrases — a paragraph that doesn't match silently disappears rather than
+  erroring, which is exactly the failure mode this test guards against
 - `hunterbot/knowledge/` — two `KnowledgeExtractor` implementations behind the
   same interface: `RuleBasedExtractor` (default, offline, CWE/OWASP/severity
   detection via keyword heuristics) and `LLMKnowledgeExtractor` (optional,
@@ -199,6 +212,13 @@ hunterbot source ingest "OWASP Top 10" ./notes/owasp-top-10.md --extractor llm
 hunterbot source add "OWASP Risk Rating Scale" --type documentation \
   --url https://owasp.org/www-community/OWASP_Risk_Rating_Methodology
 hunterbot source ingest "OWASP Risk Rating Scale" ./knowledge_sources/owasp-risk-rating-scale.md
+
+# ingest the bundled WSTG methodology reference -- 50 vulnerability classes
+# mapped to real WSTG test IDs, CWEs, test/exploit technique, and current
+# HunterBot automation coverage
+hunterbot source add "WSTG Vulnerability Methodology" --type documentation \
+  --url https://owasp.org/www-project-web-security-testing-guide/
+hunterbot source ingest "WSTG Vulnerability Methodology" ./knowledge_sources/wstg-vulnerability-methodology.md
 
 # search the extracted knowledge base
 hunterbot knowledge search --keyword injection
