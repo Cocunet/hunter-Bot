@@ -90,12 +90,25 @@ class RunScanUseCase:
             for scanner in scanners_to_run:
                 for finding in scanner.scan(base_url=base_url, http_client=http_client):
                     if self._knowledge_correlator is not None:
-                        knowledge_source_id = self._knowledge_correlator.correlate(finding)
-                        finding = finding.model_copy(update={"knowledge_source_id": knowledge_source_id})
+                        finding = self._correlate(finding)
                     persisted_findings.append(self._findings.add(finding))
             return persisted_findings
         finally:
             http_client.close()
+
+    def _correlate(self, finding: Finding) -> Finding:
+        try:
+            knowledge_source_id = self._knowledge_correlator.correlate(finding)
+        except Exception as exc:
+            # Same contract as _select_scanners below: correlation is
+            # documented as additive and never required, so a failure here
+            # (e.g. a knowledge-repository error) must degrade to "no link"
+            # rather than aborting the scan and silently dropping every
+            # finding not yet processed in the loop above.
+            logger.warning("knowledge correlation failed for finding %r (%s); leaving it unlinked", finding.title, exc)
+            logger.debug("knowledge correlation failure detail", exc_info=True)
+            return finding
+        return finding.model_copy(update={"knowledge_source_id": knowledge_source_id})
 
     def _select_scanners(self, *, base_url: str, http_client: HttpClient) -> list[ScannerPlugin]:
         if self._scanner_selector is None:

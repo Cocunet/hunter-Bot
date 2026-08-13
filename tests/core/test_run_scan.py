@@ -144,6 +144,31 @@ class TestRunScanUseCase:
 
         assert findings[0].knowledge_source_id is None
 
+    def test_correlator_failure_does_not_abort_the_scan(self, session: Session) -> None:
+        SqlAlchemyScopeRepository(session).add(
+            Scope(target="example.com", program_name="Acme", authorized_by="Alice")
+        )
+        authorization = ScopeAuthorizationService(SqlAlchemyScopeRepository(session))
+        scanner = _StubScanner([_finding()])
+
+        class _RaisingCorrelator:
+            def correlate(self, finding: Finding) -> int | None:
+                raise RuntimeError("correlation boom")
+
+        use_case = RunScanUseCase(
+            authorization_checker=authorization,
+            finding_repository=SqlAlchemyFindingRepository(session),
+            scanners=[scanner],
+            http_client_factory=lambda base_url: FakeHttpClient(),
+            knowledge_correlator=_RaisingCorrelator(),
+        )
+
+        findings = use_case.execute(base_url=_BASE_URL)
+
+        assert len(findings) == 1
+        assert findings[0].id is not None
+        assert findings[0].knowledge_source_id is None
+
     def test_adaptive_selector_narrows_which_scanners_run(self, session: Session) -> None:
         SqlAlchemyScopeRepository(session).add(
             Scope(target="example.com", program_name="Acme", authorized_by="Alice")

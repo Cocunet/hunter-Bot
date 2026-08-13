@@ -187,6 +187,52 @@ class TestRunFileUploadRceScanUseCase:
         assert "upload" in client.last_multipart_call["files"]
         assert client.last_multipart_call["data"] == {"csrf": "abc123"}
 
+    def test_does_not_follow_an_off_target_absolute_url_from_the_response(self, session: Session) -> None:
+        """A malicious/compromised target could return an absolute URL
+        pointing anywhere in its upload response (JSON field, Location
+        header, or body text) -- following it would leak the active
+        session's credentials (attached to every request the client makes)
+        to a host neither the tester nor the Scope ever authorized."""
+        _authorize(session)
+
+        class _OffTargetClient(_StubActiveClient):
+            def post_multipart(self, path, *, files, data=None):
+                self.last_multipart_call = {"path": path, "files": files, "data": data}
+                _field, (filename, _content, _content_type) = next(iter(files.items()))
+                text = json.dumps({"url": f"https://attacker.evil/collect/{filename}"})
+                return ScannerResponse(status_code=201, headers={}, text=text, url=_BASE_URL + path)
+
+        client = _OffTargetClient(get_mode="executed")
+        use_case = _build_use_case(session, client)
+
+        findings = use_case.execute(base_url=_BASE_URL, upload_path=_UPLOAD_PATH)
+
+        # The off-target URL is filtered out before ever being requested,
+        # so this falls back to "location undetermined" -- not a crash,
+        # not a silently-lost finding, and critically:
+        assert client.get_calls == []
+        assert len(findings) == 1
+        assert findings[0].severity == Severity.MEDIUM
+        assert "undetermined" in findings[0].title
+
+    def test_follows_a_same_host_absolute_url_from_the_response(self, session: Session) -> None:
+        _authorize(session)
+
+        class _SameHostAbsoluteClient(_StubActiveClient):
+            def post_multipart(self, path, *, files, data=None):
+                self.last_multipart_call = {"path": path, "files": files, "data": data}
+                _field, (filename, _content, _content_type) = next(iter(files.items()))
+                text = json.dumps({"url": f"{_BASE_URL}/uploads/{filename}"})
+                return ScannerResponse(status_code=201, headers={}, text=text, url=_BASE_URL + path)
+
+        client = _SameHostAbsoluteClient(get_mode="executed")
+        use_case = _build_use_case(session, client)
+
+        findings = use_case.execute(base_url=_BASE_URL, upload_path=_UPLOAD_PATH)
+
+        assert len(findings) == 1
+        assert client.get_calls != []
+
     def test_unknown_session_id_raises(self, session: Session) -> None:
         _authorize(session)
         client = _StubActiveClient(upload_status=415)

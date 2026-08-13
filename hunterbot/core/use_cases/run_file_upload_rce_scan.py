@@ -34,13 +34,20 @@ def _is_success(status_code: int) -> bool:
     return 200 <= status_code < 300
 
 
-def _find_candidate_paths(response, filename: str) -> list[str]:
+def _find_candidate_paths(response, filename: str, *, base_url: str) -> list[str]:
     """Best-effort guess at where an upload endpoint put the file.
 
     Tries, in order of reliability: JSON response fields, a Location
     header, and a plain-text scan for the filename inside an href/src or a
     path-shaped substring. Every source is something the server itself told
-    us -- nothing here is guessed independent of the response.
+    us -- which is exactly why each candidate is then checked against
+    ``base_url``'s host before being returned: the response is
+    attacker-shaped input (see the class docstring's threat model), and an
+    absolute URL pulled out of it could point anywhere. Blindly following
+    one would both leak the active session's credentials (attached to
+    every request the caller's client makes, regardless of destination)
+    to an unauthorized host, and fetch a target neither the tester nor the
+    Scope ever approved. See _is_same_target.
     """
     candidates: list[str] = []
 
@@ -65,10 +72,20 @@ def _find_candidate_paths(response, filename: str) -> list[str]:
     seen: set[str] = set()
     ordered: list[str] = []
     for candidate in candidates:
-        if candidate not in seen:
+        if candidate not in seen and _is_same_target(candidate, base_url):
             seen.add(candidate)
             ordered.append(candidate)
     return ordered
+
+
+def _is_same_target(candidate: str, base_url: str) -> bool:
+    """True unless ``candidate`` is an absolute URL pointing at a different
+    host than ``base_url`` -- a relative path (no netloc) always resolves
+    against base_url's own host, so it's always safe."""
+    candidate_host = urlparse(candidate).hostname
+    if candidate_host is None:
+        return True
+    return candidate_host == urlparse(base_url).hostname
 
 
 def _strings_containing(value, needle: str) -> list[str]:
@@ -175,7 +192,7 @@ class RunFileUploadRceScanUseCase:
                 logger.debug("upload to %s was not accepted (no finding)", upload_path)
                 return []
 
-            candidate_paths = _find_candidate_paths(upload_response, filename)
+            candidate_paths = _find_candidate_paths(upload_response, filename, base_url=base_url)
             if fetch_path_template:
                 candidate_paths.append(fetch_path_template.format(filename=filename))
 
